@@ -1,0 +1,12 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/tentens-tech/xds-controller#readme
+    about: Check the documentation before opening an issue
+  - name: Envoy Documentation
+    url: https://www.envoyproxy.io/docs
+    about: Official Envoy Proxy documentation
+  - name: xDS Protocol Reference
+    url: https://www.envoyproxy.io/docs/envoy/latest/api-docs/xds_protocol
+    about: Envoy xDS protocol documentation
+

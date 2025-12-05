@@ -1,0 +1,114 @@
+# golangci-lint configuration
+# https://golangci-lint.run/usage/configuration/
+# https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/.golangci.reference.yml
+
+version: "2"
+
+run:
+  timeout: 10m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - unparam
+    - nakedret
+    - prealloc
+    - gocritic
+    - revive
+    - bodyclose
+    - noctx
+    - gosec
+    - errorlint
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    misspell:
+      locale: US
+    nakedret:
+      max-func-lines: 30
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - hugeParam
+        - rangeValCopy
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          disabled: true
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+          disabled: true
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+          disabled: true
+        - name: errorf
+    gosec:
+      excludes:
+        - G104
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF1008"
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - unparam
+          - gocritic
+      - path: suite_test\.go
+        linters:
+          - revive
+        text: "dot-imports"
+      - path: zz_generated
+        linters:
+          - gocritic
+          - revive
+          - staticcheck
+      - path: pkg/xds/types/
+        linters:
+          - gocritic
+          - revive
+          - staticcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/tentens-tech/xds-controller
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

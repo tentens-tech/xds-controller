@@ -1,0 +1,44 @@
+---
+# Simple nginx backend for testing
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-backend
+  namespace: xds-system
+  labels:
+    app: test-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-backend
+  template:
+    metadata:
+      labels:
+        app: test-backend
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-backend
+  namespace: xds-system
+spec:
+  selector:
+    app: test-backend
+  ports:
+    - port: 80
+      targetPort: 80
+

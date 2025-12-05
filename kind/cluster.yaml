@@ -1,0 +1,14 @@
+# KIND cluster configuration with port mappings
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Envoy HTTP port (NodePort 30080 -> host 8080)
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
+      # Envoy admin port (NodePort 30901 -> host 9901)
+      - containerPort: 30901
+        hostPort: 9901
+        protocol: TCP

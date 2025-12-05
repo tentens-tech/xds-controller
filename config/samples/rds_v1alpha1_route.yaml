@@ -1,0 +1,61 @@
+---
+# HTTP redirect route - redirects all HTTP to HTTPS
+# References: Listener/http
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: http-redirect
+spec:
+  listener_refs:
+    - http
+  stat_prefix: http_redirect
+  codec_type: AUTO
+  route_config:
+    name: redirect_route
+    virtual_hosts:
+    - name: redirect_all
+      domains: ["*"]
+      routes:
+      - match:
+          prefix: "/"
+        redirect:
+          https_redirect: true
+  http_filters:
+  - name: envoy.filters.http.router
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+---
+# HTTPS route that forwards to backend-service cluster
+# References: Listener/https, Cluster/backend-service
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: example-route
+spec:
+  listener_refs:
+    - https
+  filter_chain_match:
+    server_names:
+    - example.local
+  stat_prefix: http_example
+  generate_request_id: true
+  codec_type: AUTO
+  route_config:
+    name: local_route
+    virtual_hosts:
+    - name: local_service
+      domains:
+      - example.local
+      routes:
+      - match:
+          prefix: /
+        route:
+          cluster: backend-service
+          timeout: 15s
+          retry_policy:
+            retry_on: gateway-error,5xx,reset,connect-failure
+            num_retries: 2
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router

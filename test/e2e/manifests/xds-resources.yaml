@@ -1,0 +1,151 @@
+---
+# HTTP Listener for E2E testing
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: http-e2e
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8080
+---
+# TCP Proxy Listener for E2E testing
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: tcp-proxy-e2e
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9000
+  filter_chains:
+    - filters:
+        - name: envoy.filters.network.tcp_proxy
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+            stat_prefix: tcp_proxy_e2e
+            cluster: tcp-backend-cluster
+---
+# Route that forwards to test-backend (HTTP)
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: test-route
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  listener_refs:
+    - http-e2e
+  stat_prefix: e2e_test
+  codec_type: AUTO
+  route_config:
+    name: e2e_route
+    virtual_hosts:
+      - name: test_backend
+        domains:
+          - "*"
+        routes:
+          - match:
+              prefix: "/"
+            route:
+              cluster: test-backend-cluster
+              timeout: 15s
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+---
+# Main cluster pointing to test-backend service (STRICT_DNS for reliability)
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-backend-cluster
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  connect_timeout: 5s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  load_assignment:
+    cluster_name: test-backend-cluster
+    endpoints:
+      - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: test-backend.xds-system.svc.cluster.local
+                  port_value: 80
+---
+# TCP backend cluster for TCP proxy listener
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: tcp-backend-cluster
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  connect_timeout: 5s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  load_assignment:
+    cluster_name: tcp-backend-cluster
+    endpoints:
+      - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: test-backend.xds-system.svc.cluster.local
+                  port_value: 80
+---
+# EDS cluster for testing endpoint_refs feature
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: eds-test-cluster
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  connect_timeout: 5s
+  type: EDS
+  lb_policy: ROUND_ROBIN
+  endpoint_refs:
+    - eds-test-endpoints
+---
+# Endpoint resource for EDS testing
+apiVersion: envoyxds.io/v1alpha1
+kind: Endpoint
+metadata:
+  name: eds-test-endpoints
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  cluster_name: eds-test-cluster
+  endpoints:
+    - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: test-backend.xds-system.svc.cluster.local
+                port_value: 80
+          health_status: HEALTHY
+

@@ -1,0 +1,84 @@
+---
+# Endpoint for backend-service (zone-a)
+# Referenced by: Cluster/backend-with-endpoint-refs
+apiVersion: envoyxds.io/v1alpha1
+kind: Endpoint
+metadata:
+  name: backend-zone-a
+spec:
+  endpoints:
+    - locality:
+        region: us-east-1
+        zone: us-east-1a
+      lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.0.1.10
+                port_value: 8080
+          load_balancing_weight: 100
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.0.1.11
+                port_value: 8080
+          load_balancing_weight: 100
+      load_balancing_weight: 100
+      priority: 0
+---
+# Endpoint for backend-service (zone-b)
+# Referenced by: Cluster/backend-with-endpoint-refs
+apiVersion: envoyxds.io/v1alpha1
+kind: Endpoint
+metadata:
+  name: backend-zone-b
+spec:
+  endpoints:
+    - locality:
+        region: us-east-1
+        zone: us-east-1b
+      lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.0.2.10
+                port_value: 8080
+          load_balancing_weight: 100
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.0.2.11
+                port_value: 8080
+          load_balancing_weight: 100
+      load_balancing_weight: 100
+      priority: 0
+---
+# Endpoint served via EDS protocol
+# Referenced by: Cluster/backend-eds-cluster (type: EDS)
+# The cluster_name MUST match the service_name in the cluster's eds_cluster_config
+apiVersion: envoyxds.io/v1alpha1
+kind: Endpoint
+metadata:
+  name: backend-eds-endpoints
+spec:
+  # cluster_name must match the EDS service_name in the referencing cluster
+  cluster_name: backend-eds-endpoints
+  endpoints:
+    - locality:
+        region: us-west-2
+        zone: us-west-2a
+      lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.1.1.10
+                port_value: 8080
+          load_balancing_weight: 100
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.1.1.11
+                port_value: 8080
+          load_balancing_weight: 100
+      load_balancing_weight: 100
+      priority: 0

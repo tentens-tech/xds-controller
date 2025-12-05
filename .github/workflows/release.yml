@@ -1,0 +1,387 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0). Leave empty to use latest tag.'
+        required: false
+        type: string
+      force:
+        description: 'Force overwrite existing release'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  GO_VERSION: '1.25'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  setup:
+    name: Setup Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      should_release: ${{ steps.resolve.outputs.should_release }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            # Get latest tag
+            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$TAG" ]; then
+              echo "::error::No tag found. Please specify a tag or create one first."
+              exit 1
+            fi
+          fi
+          echo "Resolved tag: $TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "should_release=true" >> $GITHUB_OUTPUT
+
+      - name: Check existing release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          if gh release view "$TAG" &>/dev/null; then
+            echo "Release $TAG already exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Release $TAG does not exist"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Delete existing release (if force)
+        if: steps.check.outputs.exists == 'true' && (github.event_name == 'workflow_dispatch' && inputs.force || github.event_name == 'push')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          echo "Deleting existing release $TAG..."
+          gh release delete "$TAG" --yes || true
+          echo "Existing release deleted"
+
+  test:
+    name: Test
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup.outputs.tag }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests
+        run: go test -v -race ./...
+
+  # Build amd64 image on native runner
+  build-docker-amd64:
+    name: Docker amd64
+    needs: [setup, test]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version info
+        id: version
+        run: |
+          echo "version=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "git_commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+
+      - name: Build and push amd64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RELEASE_TAG }}-amd64
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.git_commit }}
+            BUILD_DATE=${{ steps.version.outputs.build_date }}
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+  # Build arm64 image on native ARM runner
+  build-docker-arm64:
+    name: Docker arm64
+    needs: [setup, test]
+    runs-on: ubuntu-24.04-arm
+    env:
+      RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version info
+        id: version
+        run: |
+          echo "version=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "git_commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+
+      - name: Build and push arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RELEASE_TAG }}-arm64
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.git_commit }}
+            BUILD_DATE=${{ steps.version.outputs.build_date }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+  # Create multi-arch manifest
+  docker-manifest:
+    name: Docker Manifest
+    needs: [setup, build-docker-amd64, build-docker-arm64]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push version manifest
+        run: |
+          echo "Creating manifest for: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$RELEASE_TAG"
+          docker buildx imagetools create -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$RELEASE_TAG \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$RELEASE_TAG-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$RELEASE_TAG-arm64
+
+      - name: Create and push latest manifest
+        run: |
+          echo "Creating manifest for: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          docker buildx imagetools create -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$RELEASE_TAG-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$RELEASE_TAG-arm64
+
+  # Generate Kubernetes manifests from config/
+  generate-manifests:
+    name: Generate Manifests
+    needs: [setup, test]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup.outputs.tag }}
+
+      - name: Generate xds-controller manifest
+        run: |
+          mkdir -p manifests
+          
+          # Combine controller manifests and update image tag
+          {
+            echo "# Envoy xDS Controller"
+            echo "# Version: $RELEASE_TAG"
+            echo "# Install: kubectl apply -f xds-controller.yaml"
+            echo "#"
+            echo "# CRDs must be installed first:"
+            echo "# kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/$RELEASE_TAG/config/crd/bases/"
+            echo ""
+            cat config/controller/xds-controller.yaml
+            echo "---"
+            cat config/controller/role.yaml
+            echo "---"
+            cat config/controller/role_binding.yaml
+          } > manifests/xds-controller.yaml
+          
+          # Update image tag to release version
+          sed -i "s|ghcr.io/tentens-tech/xds-controller:latest|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$RELEASE_TAG|g" manifests/xds-controller.yaml
+
+      - name: Generate envoy manifest
+        run: |
+          {
+            echo "# Envoy Proxy connected to xDS Controller"
+            echo "# Version: $RELEASE_TAG"
+            echo "# Install: kubectl apply -f envoy.yaml"
+            echo "#"
+            echo "# Prerequisites:"
+            echo "# 1. Install CRDs"
+            echo "# 2. Deploy xds-controller"
+            echo "# 3. Create xDS resources (Listeners, Routes, Clusters, Endpoints)"
+            echo ""
+            cat config/envoy/envoy-deployment.yaml
+          } > manifests/envoy.yaml
+
+      - name: Verify manifests
+        run: |
+          echo "=== Generated manifests ==="
+          ls -la manifests/
+          echo ""
+          echo "=== xds-controller.yaml ==="
+          cat manifests/xds-controller.yaml
+          echo ""
+          echo "=== envoy.yaml ==="
+          cat manifests/envoy.yaml
+
+      - name: Upload manifests
+        uses: actions/upload-artifact@v5
+        with:
+          name: manifests
+          path: manifests/
+
+  release:
+    name: Create Release
+    needs: [setup, docker-manifest, generate-manifests]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Download manifests
+        uses: actions/download-artifact@v6
+        with:
+          name: manifests
+          path: release
+
+      - name: Generate checksums
+        working-directory: release
+        run: |
+          sha256sum *.yaml > checksums.txt
+          cat checksums.txt
+
+      - name: Generate release notes
+        run: |
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+" | head -2 | tail -1 || echo "")
+          
+          cat > release_notes.md << NOTES
+          A Kubernetes-native control plane for Envoy Proxy that implements the xDS discovery service protocol.
+
+          ### 🚀 Quick Start
+
+          \`\`\`bash
+          # 1. Install CRDs
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/$RELEASE_TAG/config/crd/bases/envoyxds.io_listeners.yaml
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/$RELEASE_TAG/config/crd/bases/envoyxds.io_routes.yaml
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/$RELEASE_TAG/config/crd/bases/envoyxds.io_clusters.yaml
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/$RELEASE_TAG/config/crd/bases/envoyxds.io_endpoints.yaml
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/$RELEASE_TAG/config/crd/bases/envoyxds.io_tlssecrets.yaml
+
+          # 2. Deploy xDS Controller
+          kubectl apply -f https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/xds-controller.yaml
+
+          # 3. Deploy Envoy (connected to xDS Controller)
+          kubectl apply -f https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/envoy.yaml
+
+          # 4. Run demo (nginx + LDS + CDS + RDS)
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/$RELEASE_TAG/config/demo/demo.yaml
+
+          # 5. Test
+          kubectl port-forward -n xds-system svc/envoy 8080:8080
+          curl http://localhost:8080/
+          \`\`\`
+
+          ### 📦 Docker Image
+
+          \`\`\`bash
+          docker pull ghcr.io/${{ github.repository }}:$RELEASE_TAG
+          \`\`\`
+
+          ### 🔧 What's Changed
+
+          NOTES
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Changes since $PREVIOUS_TAG:" >> release_notes.md
+            echo "" >> release_notes.md
+            git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..$RELEASE_TAG --no-merges >> release_notes.md
+          else
+            echo "Initial release" >> release_notes.md
+          fi
+
+          cat >> release_notes.md << NOTES
+
+          ### 📚 Documentation
+
+          - [README](https://github.com/${{ github.repository }}#readme)
+          - [LDS (Listener Discovery Service)](https://github.com/${{ github.repository }}/blob/main/controllers/lds/README.md)
+          - [RDS (Route Discovery Service)](https://github.com/${{ github.repository }}/blob/main/controllers/rds/README.md)
+          - [CDS (Cluster Discovery Service)](https://github.com/${{ github.repository }}/blob/main/controllers/cds/README.md)
+          - [EDS (Endpoint Discovery Service)](https://github.com/${{ github.repository }}/blob/main/controllers/eds/README.md)
+          - [SDS (Secret Discovery Service)](https://github.com/${{ github.repository }}/blob/main/controllers/sds/README.md)
+
+          NOTES
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Envoy xDS Controller ${{ env.RELEASE_TAG }}
+          body_path: release_notes.md
+          files: |
+            release/*
+          draft: false
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}

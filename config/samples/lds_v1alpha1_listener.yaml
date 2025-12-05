@@ -1,0 +1,28 @@
+---
+# HTTP Listener on port 80
+# Referenced by: Route/http-redirect
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: http
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 80
+---
+# HTTPS Listener on port 443 with TLS inspector
+# Referenced by: Route/example-route
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: https
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 443
+  listener_filters:
+  - name: "envoy.filters.listener.tls_inspector"
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector

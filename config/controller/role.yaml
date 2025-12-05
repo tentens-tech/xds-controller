@@ -1,0 +1,37 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: xds-controller
+rules:
+  # xDS resources
+  - apiGroups: ["envoyxds.io"]
+    resources:
+      - listeners
+      - listeners/status
+      - listeners/finalizers
+      - routes
+      - routes/status
+      - routes/finalizers
+      - clusters
+      - clusters/status
+      - clusters/finalizers
+      - endpoints
+      - endpoints/status
+      - endpoints/finalizers
+      - tlssecrets
+      - tlssecrets/status
+      - tlssecrets/finalizers
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Secrets for TLS
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

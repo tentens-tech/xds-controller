@@ -1,0 +1,124 @@
+# Envoy xDS Controller Demo
+# 
+# This demo creates a complete working example with:
+# - nginx backend deployment
+# - Listener (LDS) on port 8080
+# - Cluster (CDS) pointing to nginx
+# - Route (RDS) connecting listener to cluster
+#
+# Prerequisites:
+# 1. Install CRDs: kubectl apply -f config/crd/bases/
+# 2. Deploy xDS Controller: kubectl apply -f config/controller/
+# 3. Deploy Envoy: kubectl apply -f config/envoy/envoy-deployment.yaml
+#
+# Usage:
+# kubectl apply -f config/demo/demo.yaml
+#
+# Test:
+# kubectl port-forward -n xds-system svc/envoy 8080:8080
+# curl http://localhost:8080/
+---
+# nginx backend deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: xds-system
+  labels:
+    app: nginx
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+---
+# nginx service
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: xds-system
+spec:
+  selector:
+    app: nginx
+  ports:
+    - port: 80
+      targetPort: 80
+---
+# Listener: HTTP on port 8080
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: demo-http
+  namespace: xds-system
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8080
+---
+# Cluster: points to nginx service
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: nginx-cluster
+  namespace: xds-system
+spec:
+  connect_timeout: 5s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  load_assignment:
+    cluster_name: nginx-cluster
+    endpoints:
+      - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: nginx.xds-system.svc.cluster.local
+                  port_value: 80
+---
+# Route: connects listener to cluster
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: demo-route
+  namespace: xds-system
+spec:
+  listener_refs:
+    - demo-http
+  stat_prefix: demo
+  codec_type: AUTO
+  route_config:
+    name: demo_route
+    virtual_hosts:
+      - name: demo
+        domains:
+          - "*"
+        routes:
+          - match:
+              prefix: "/"
+            route:
+              cluster: nginx-cluster
+              timeout: 30s
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+

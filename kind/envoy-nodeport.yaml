@@ -1,0 +1,21 @@
+# Envoy Service with NodePort for KIND direct access
+# This patches the default Envoy service to use NodePort
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy
+  namespace: xds-system
+spec:
+  type: NodePort
+  selector:
+    app: envoy
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+    - name: admin
+      port: 9901
+      targetPort: 9901
+      nodePort: 30901
+

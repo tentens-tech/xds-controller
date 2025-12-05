@@ -1,0 +1,169 @@
+# =============================================================================
+# HTTPS/TLS Example - Secure Traffic with TLS Termination
+# =============================================================================
+# This example demonstrates HTTPS configuration with TLS certificates.
+# Includes both self-signed (for development) and Let's Encrypt options.
+#
+# Components:
+#   - TLSSecret: Certificate management (self-signed or Let's Encrypt)
+#   - Listener: HTTPS on port 443 with TLS inspector
+#   - Listener: HTTP on port 80 for redirect
+#   - Cluster: Backend service
+#   - Route: HTTPS route with TLS termination
+#   - Route: HTTP to HTTPS redirect
+# =============================================================================
+
+---
+# Option 1: Self-signed certificate (for development/testing)
+# Automatically generates a self-signed certificate
+apiVersion: envoyxds.io/v1alpha1
+kind: TLSSecret
+metadata:
+  name: dev-cert
+  namespace: xds-system
+spec:
+  domains:
+    - "*.example.local"
+    - "example.local"
+  config:
+    type: Local
+
+---
+# Option 2: Let's Encrypt certificate (for production)
+# Uncomment and configure for real certificates
+# Requires: CLOUDFLARE_DNS_API_TOKEN environment variable
+# apiVersion: envoyxds.io/v1alpha1
+# kind: TLSSecret
+# metadata:
+#   name: production-cert
+#   namespace: xds-system
+# spec:
+#   domains:
+#     - "example.com"
+#     - "*.example.com"
+#   challenge:
+#     challenge_type: DNS01
+#     dns01_provider: cloudflare
+#     acme_env: Production  # Use "Staging" for testing
+
+---
+# HTTP Listener - for redirect to HTTPS
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: http
+  namespace: xds-system
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 80
+
+---
+# HTTPS Listener with TLS Inspector
+# The TLS inspector is required for SNI-based routing
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: https
+  namespace: xds-system
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 443
+  listener_filters:
+    - name: envoy.filters.listener.tls_inspector
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+
+---
+# Backend Cluster
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: backend
+  namespace: xds-system
+spec:
+  connect_timeout: 5s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  load_assignment:
+    cluster_name: backend
+    endpoints:
+      - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: nginx.xds-system.svc.cluster.local
+                  port_value: 80
+
+---
+# HTTP to HTTPS Redirect Route
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: http-redirect
+  namespace: xds-system
+spec:
+  listener_refs:
+    - http
+  stat_prefix: http_redirect
+  codec_type: AUTO
+  route_config:
+    name: redirect_route
+    virtual_hosts:
+      - name: redirect_all
+        domains:
+          - "*"
+        routes:
+          - match:
+              prefix: "/"
+            redirect:
+              https_redirect: true
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+---
+# HTTPS Route with TLS termination
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: https-route
+  namespace: xds-system
+spec:
+  listener_refs:
+    - https
+  tlssecret_ref: dev-cert  # Reference to TLSSecret
+  filter_chain_match:
+    server_names:
+      - example.local
+      - "*.example.local"
+  stat_prefix: https
+  use_remote_address: true
+  generate_request_id: true
+  codec_type: AUTO
+  route_config:
+    name: https_route
+    virtual_hosts:
+      - name: secure_host
+        domains:
+          - "*"
+        response_headers_to_add:
+          # HSTS header for security
+          - header:
+              key: strict-transport-security
+              value: "max-age=31536000; includeSubDomains"
+        routes:
+          - match:
+              prefix: /
+            route:
+              cluster: backend
+              timeout: 30s
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+

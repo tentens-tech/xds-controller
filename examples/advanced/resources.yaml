@@ -1,0 +1,259 @@
+# =============================================================================
+# Advanced Example - Full-Featured HTTP Configuration
+# =============================================================================
+# This example demonstrates advanced HTTP features:
+#   - CORS configuration
+#   - Brotli compression
+#   - Lua scripting
+#   - Access logging with JSON format
+#   - Custom headers
+#   - Retry policies
+#   - Path rewriting
+#   - Redirects
+# =============================================================================
+
+---
+# HTTP Listener
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: http-advanced
+  namespace: xds-system
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8080
+
+---
+# Backend Cluster with health checks and circuit breakers
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: api-backend
+  namespace: xds-system
+spec:
+  connect_timeout: 0.5s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  ignore_health_on_host_removal: true
+  upstream_connection_options:
+    tcp_keepalive: {}
+  load_assignment:
+    cluster_name: api-backend
+    endpoints:
+      - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: nginx.xds-system.svc.cluster.local
+                  port_value: 80
+  health_checks:
+    - timeout: 2s
+      interval: 5s
+      unhealthy_threshold: 3
+      healthy_threshold: 1
+      http_health_check:
+        path: /
+  circuit_breakers:
+    thresholds:
+      - max_connections: 1000
+        max_pending_requests: 1000
+        max_requests: 2000
+        max_retries: 3
+
+---
+# Advanced Route with all features
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: advanced-route
+  namespace: xds-system
+spec:
+  listener_refs:
+    - http-advanced
+  stat_prefix: advanced
+  use_remote_address: true
+  generate_request_id: true
+  codec_type: AUTO
+  # HTTP protocol options
+  common_http_protocol_options:
+    idle_timeout: 900s
+  # Route configuration
+  route_config:
+    name: advanced_route_config
+    virtual_hosts:
+      - name: api_host
+        domains:
+          - "*"
+        # CORS configuration
+        cors:
+          allow_credentials: true
+          allow_origin_string_match:
+            - safe_regex:
+                regex: ".*"
+          allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS,HEAD
+          allow_headers: Authorization,Content-Type,X-Requested-With,Accept,Origin,X-Custom-Header
+          expose_headers: X-Request-Id,X-Response-Time
+          max_age: 24h
+        # Response headers
+        response_headers_to_add:
+          - header:
+              key: x-api-version
+              value: "v1.0"
+          - header:
+              key: x-powered-by
+              value: "xds-controller"
+        routes:
+          # API routes with prefix rewrite and retry
+          - match:
+              prefix: /api/v1/
+            request_headers_to_add:
+              - header:
+                  key: x-route-name
+                  value: api-v1
+            route:
+              prefix_rewrite: /
+              timeout: 15s
+              cluster: api-backend
+              retry_policy:
+                retry_host_predicate:
+                  - name: envoy.retry_host_predicates.previous_hosts
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.retry.host.previous_hosts.v3.PreviousHostsPredicate
+                host_selection_retry_max_attempts: 2
+                retriable_status_codes:
+                  - 503
+                  - 502
+                  - 504
+                retry_on: connect-failure,refused-stream,unavailable,cancelled,retriable-status-codes
+                num_retries: 3
+                per_try_timeout: 5s
+          # Health check endpoint
+          - match:
+              prefix: /health
+            route:
+              timeout: 5s
+              cluster: api-backend
+          # Redirect old paths to new paths
+          - match:
+              prefix: /old-api/
+            redirect:
+              path_redirect: /api/v1/
+              response_code: MOVED_PERMANENTLY
+          # Legacy redirect with query string preservation
+          - match:
+              prefix: /legacy
+            redirect:
+              prefix_rewrite: /api/v1
+              response_code: TEMPORARY_REDIRECT
+          # Rate-limited endpoint (just routing, rate limiting needs external config)
+          - match:
+              prefix: /api/limited/
+            request_headers_to_add:
+              - header:
+                  key: x-rate-limit-zone
+                  value: limited
+            route:
+              prefix_rewrite: /
+              timeout: 10s
+              cluster: api-backend
+          # Default catch-all route
+          - match:
+              prefix: /
+            request_headers_to_add:
+              - header:
+                  key: x-route-name
+                  value: default
+            route:
+              timeout: 30s
+              cluster: api-backend
+  # Access logging
+  access_log:
+    - name: envoy.access_loggers.file
+      filter:
+        status_code_filter:
+          comparison:
+            op: GE
+            value:
+              default_value: 400
+              runtime_key: access_log.error.status
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
+        path: /dev/stdout
+        log_format:
+          json_format:
+            timestamp: "%START_TIME%"
+            method: "%REQ(:METHOD)%"
+            path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+            protocol: "%PROTOCOL%"
+            response_code: "%RESPONSE_CODE%"
+            response_flags: "%RESPONSE_FLAGS%"
+            bytes_received: "%BYTES_RECEIVED%"
+            bytes_sent: "%BYTES_SENT%"
+            duration_ms: "%DURATION%"
+            upstream_service_time: "%RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)%"
+            x_forwarded_for: "%REQ(X-FORWARDED-FOR)%"
+            user_agent: "%REQ(USER-AGENT)%"
+            request_id: "%REQ(X-REQUEST-ID)%"
+            authority: "%REQ(:AUTHORITY)%"
+            upstream_host: "%UPSTREAM_HOST%"
+            upstream_cluster: "%UPSTREAM_CLUSTER%"
+            upstream_local_address: "%UPSTREAM_LOCAL_ADDRESS%"
+            downstream_local_address: "%DOWNSTREAM_LOCAL_ADDRESS%"
+            downstream_remote_address: "%DOWNSTREAM_REMOTE_ADDRESS%"
+  # HTTP Filters
+  http_filters:
+    # CORS filter
+    - name: envoy.filters.http.cors
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
+    # Brotli compression
+    - name: envoy.filters.http.compressor
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.compressor.v3.Compressor
+        response_direction_config:
+          common_config:
+            min_content_length: 256
+            content_type:
+              - text/html
+              - text/css
+              - text/plain
+              - text/javascript
+              - application/javascript
+              - application/json
+              - application/xml
+              - image/svg+xml
+        compressor_library:
+          name: text_optimized
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.compression.brotli.compressor.v3.Brotli
+            quality: 4
+            window_bits: 18
+    # Lua scripting for custom logic
+    - name: envoy.filters.http.lua
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+        inline_code: |
+          function envoy_on_request(request_handle)
+            -- Add timestamp header
+            request_handle:headers():add("x-request-timestamp", os.time())
+            
+            -- Log incoming request (for debugging)
+            local path = request_handle:headers():get(":path")
+            local method = request_handle:headers():get(":method")
+            request_handle:logInfo("Request: " .. method .. " " .. path)
+          end
+          
+          function envoy_on_response(response_handle)
+            -- Add processing time header
+            response_handle:headers():add("x-lua-processed", "true")
+            
+            -- Add custom server header
+            response_handle:headers():add("x-response-timestamp", os.time())
+          end
+    # Router must be last
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+

@@ -1,0 +1,79 @@
+# =============================================================================
+# Basic Example - Minimal HTTP Proxy
+# =============================================================================
+# This is the simplest possible xDS configuration that creates a working
+# HTTP proxy through Envoy.
+#
+# Components:
+#   - Listener: Accepts HTTP traffic on port 8080
+#   - Cluster: Defines the backend service
+#   - Route: Connects the listener to the cluster
+# =============================================================================
+
+---
+# Listener: HTTP on port 8080
+# Accepts incoming HTTP connections and passes them to routes
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: http
+  namespace: xds-system
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8080
+
+---
+# Cluster: Backend service definition
+# Uses DNS-based service discovery to find the backend
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: backend
+  namespace: xds-system
+spec:
+  connect_timeout: 5s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  load_assignment:
+    cluster_name: backend
+    endpoints:
+      - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  # Replace with your backend service address
+                  address: nginx.xds-system.svc.cluster.local
+                  port_value: 80
+
+---
+# Route: Connects listener to cluster
+# Routes all traffic from the HTTP listener to the backend cluster
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: default-route
+  namespace: xds-system
+spec:
+  listener_refs:
+    - http
+  stat_prefix: default
+  codec_type: AUTO
+  route_config:
+    name: default_route
+    virtual_hosts:
+      - name: default
+        domains:
+          - "*"
+        routes:
+          - match:
+              prefix: /
+            route:
+              cluster: backend
+              timeout: 30s
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+

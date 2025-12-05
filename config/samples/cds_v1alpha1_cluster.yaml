@@ -1,0 +1,83 @@
+---
+# Example 1: Cluster with inline load_assignment (DNS-based)
+# Used by: Route/example-route routes to this cluster
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: backend-service
+spec:
+  connect_timeout: 0.25s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  load_assignment:
+    cluster_name: backend-service
+    endpoints:
+    - lb_endpoints:
+      - endpoint:
+          address:
+            socket_address:
+              address: httpbin.org
+              port_value: 80
+      locality:
+        zone: default
+  circuit_breakers:
+    thresholds:
+      - max_connections: 1000
+        max_pending_requests: 1000
+        max_requests: 2000
+        max_retries: 3
+---
+# Example 2: Cluster with endpoint_refs (recommended for dynamic endpoints)
+# References: Endpoint/backend-zone-a and Endpoint/backend-zone-b
+# Endpoints are merged inline into the cluster's load_assignment
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: backend-with-endpoint-refs
+spec:
+  # Reference Endpoint resources by name - endpoints are merged inline
+  endpoint_refs:
+    - backend-zone-a
+    - backend-zone-b
+  connect_timeout: 0.25s
+  type: STATIC
+  lb_policy: ROUND_ROBIN
+  health_checks:
+  - timeout: 2s
+    interval: 5s
+    unhealthy_threshold: 3
+    healthy_threshold: 1
+    http_health_check:
+      path: /health
+  circuit_breakers:
+    thresholds:
+      - max_connections: 1000
+        max_pending_requests: 1000
+        max_requests: 2000
+        max_retries: 3
+---
+# Example 3: Cluster with EDS discovery type
+# Uses Envoy's Endpoint Discovery Service protocol
+# References: Endpoint/backend-eds-endpoints (served via xDS EDS)
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: backend-eds-cluster
+spec:
+  connect_timeout: 0.25s
+  type: EDS
+  lb_policy: ROUND_ROBIN
+  # EDS cluster config - service_name must match the Endpoint resource name
+  eds_cluster_config:
+    service_name: backend-eds-endpoints
+    eds_config:
+      # Use ADS (Aggregated Discovery Service) - endpoints come from this controller
+      ads: {}
+      resource_api_version: V3
+  health_checks:
+  - timeout: 2s
+    interval: 5s
+    unhealthy_threshold: 3
+    healthy_threshold: 1
+    http_health_check:
+      path: /health

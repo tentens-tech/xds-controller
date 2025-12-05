@@ -1,0 +1,4 @@
+# Paths to ignore (test files with mock credentials)
+paths-ignore:
+  - "**/*_test.go"
+

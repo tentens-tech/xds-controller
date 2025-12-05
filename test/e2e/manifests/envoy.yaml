@@ -1,0 +1,157 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+  namespace: xds-system
+data:
+  envoy.yaml: |
+    node:
+      cluster: e2e-test
+      id: e2e-test-node
+    admin:
+      access_log:
+      - name: envoy.access_loggers.file
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
+          path: /dev/stdout
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+    dynamic_resources:
+      lds_config:
+        ads: {}
+        initial_fetch_timeout: 0s
+        resource_api_version: V3
+      cds_config:
+        ads: {}
+        initial_fetch_timeout: 0s
+        resource_api_version: V3
+      ads_config:
+        api_type: GRPC
+        transport_api_version: V3
+        grpc_services:
+          envoy_grpc:
+            cluster_name: xds_cluster
+    static_resources:
+      clusters:
+        - name: xds_cluster
+          connect_timeout: 5s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          ignore_health_on_host_removal: true
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options:
+                  connection_keepalive:
+                    interval: 30s
+                    timeout: 5s
+          load_assignment:
+            cluster_name: xds_cluster
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: xds-controller.xds-system.svc.cluster.local
+                          port_value: 18000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy
+  namespace: xds-system
+  labels:
+    app: envoy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: envoy
+  template:
+    metadata:
+      labels:
+        app: envoy
+    spec:
+      containers:
+        - name: envoy
+          image: envoyproxy/envoy:v1.31-latest
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8081
+              name: http-complex
+            - containerPort: 8443
+              name: https
+            - containerPort: 8444
+              name: quic
+              protocol: UDP
+            - containerPort: 9000
+              name: tcp-proxy
+            - containerPort: 9901
+              name: admin
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+          args:
+            - "-c"
+            - "/etc/envoy/envoy.yaml"
+            - "--log-level"
+            - "info"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9901
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: envoy-config
+          configMap:
+            name: envoy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy
+  namespace: xds-system
+spec:
+  type: NodePort
+  selector:
+    app: envoy
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
+    - name: http-complex
+      port: 8081
+      targetPort: 8081
+      nodePort: 30081
+    - name: https
+      port: 8443
+      targetPort: 8443
+      nodePort: 30443
+    - name: quic
+      port: 8444
+      targetPort: 8444
+      nodePort: 30444
+      protocol: UDP
+    - name: tcp-proxy
+      port: 9000
+      targetPort: 9000
+      nodePort: 30900
+    - name: admin
+      port: 9901
+      targetPort: 9901
+      nodePort: 30901
+

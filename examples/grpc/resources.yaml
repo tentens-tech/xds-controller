@@ -1,0 +1,194 @@
+# =============================================================================
+# gRPC Example - gRPC Routing and Load Balancing
+# =============================================================================
+# This example demonstrates gRPC-specific features:
+#   - gRPC routing
+#   - gRPC-Web support (browser compatibility)
+#   - gRPC health checking
+#   - gRPC stats and monitoring
+#   - HTTP/2 configuration for gRPC
+# =============================================================================
+
+---
+# HTTP/2 Listener for gRPC
+# gRPC requires HTTP/2, so we configure the listener accordingly
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: grpc
+  namespace: xds-system
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 50051
+
+---
+# gRPC Backend Cluster with HTTP/2 and gRPC health checking
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: grpc-backend
+  namespace: xds-system
+spec:
+  connect_timeout: 5s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  # Enable HTTP/2 for gRPC
+  http2_protocol_options: {}
+  load_assignment:
+    cluster_name: grpc-backend
+    endpoints:
+      - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  # Replace with your gRPC service
+                  address: grpc-service.default.svc.cluster.local
+                  port_value: 50051
+  # gRPC health check
+  health_checks:
+    - timeout: 5s
+      interval: 10s
+      unhealthy_threshold: 3
+      healthy_threshold: 1
+      grpc_health_check:
+        service_name: ""  # Empty = check all services
+  circuit_breakers:
+    thresholds:
+      - max_connections: 1000
+        max_pending_requests: 1000
+        max_requests: 2000
+        max_retries: 3
+
+---
+# Alternative: gRPC-Web accessible via HTTP (for browser clients)
+apiVersion: envoyxds.io/v1alpha1
+kind: Listener
+metadata:
+  name: grpc-web
+  namespace: xds-system
+spec:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8080
+
+---
+# gRPC Route with gRPC-Web and stats support
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: grpc-route
+  namespace: xds-system
+spec:
+  listener_refs:
+    - grpc
+    - grpc-web  # Also accessible via gRPC-Web
+  stat_prefix: grpc
+  codec_type: AUTO
+  route_config:
+    name: grpc_route
+    virtual_hosts:
+      - name: grpc_services
+        domains:
+          - "*"
+        routes:
+          # Route for specific gRPC service
+          - match:
+              prefix: /mypackage.MyService/
+              grpc: {}  # Only match gRPC requests
+            route:
+              cluster: grpc-backend
+              timeout: 60s
+              retry_policy:
+                retry_on: cancelled,deadline-exceeded,unavailable
+                num_retries: 3
+                per_try_timeout: 20s
+          # Route for gRPC health check service
+          - match:
+              prefix: /grpc.health.v1.Health/
+              grpc: {}
+            route:
+              cluster: grpc-backend
+              timeout: 5s
+          # Route for gRPC reflection (for debugging with grpcurl)
+          - match:
+              prefix: /grpc.reflection.v1alpha.ServerReflection/
+              grpc: {}
+            route:
+              cluster: grpc-backend
+              timeout: 30s
+          # Catch-all for any other gRPC services
+          - match:
+              prefix: /
+              grpc: {}
+            route:
+              cluster: grpc-backend
+              timeout: 30s
+  http_filters:
+    # gRPC-Web filter (enables browser gRPC via HTTP/1.1)
+    - name: envoy.filters.http.grpc_web
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb
+    # CORS filter for gRPC-Web (browser needs CORS)
+    - name: envoy.filters.http.cors
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
+    # gRPC stats for monitoring
+    - name: envoy.filters.http.grpc_stats
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_stats.v3.FilterConfig
+        stats_for_all_methods: true
+        enable_upstream_stats: true
+        emit_filter_state: true
+    # Router must be last
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+---
+# gRPC Route with CORS for browser clients
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: grpc-web-route
+  namespace: xds-system
+spec:
+  listener_refs:
+    - grpc-web
+  stat_prefix: grpc_web
+  codec_type: AUTO
+  route_config:
+    name: grpc_web_route
+    virtual_hosts:
+      - name: grpc_web_services
+        domains:
+          - "*"
+        # CORS configuration for gRPC-Web
+        cors:
+          allow_credentials: true
+          allow_origin_string_match:
+            - safe_regex:
+                regex: ".*"
+          allow_methods: POST,GET,OPTIONS
+          allow_headers: content-type,x-grpc-web,x-user-agent,grpc-timeout
+          expose_headers: grpc-status,grpc-message
+          max_age: 24h
+        routes:
+          - match:
+              prefix: /
+            route:
+              cluster: grpc-backend
+              timeout: 60s
+  http_filters:
+    - name: envoy.filters.http.grpc_web
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_web.v3.GrpcWeb
+    - name: envoy.filters.http.cors
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
