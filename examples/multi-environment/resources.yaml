@@ -23,35 +23,15 @@
 apiVersion: envoyxds.io/v1alpha1
 kind: Listener
 metadata:
-  name: http-production
+  name: http
   namespace: xds-system
   annotations:
-    clusters: "production"  # Only sent to production Envoys
+    clusters: "production,staging"
 spec:
   address:
     socket_address:
       address: 0.0.0.0
       port_value: 8080
-
----
-# Production HTTPS Listener
-apiVersion: envoyxds.io/v1alpha1
-kind: Listener
-metadata:
-  name: https-production
-  namespace: xds-system
-  annotations:
-    clusters: "production"
-spec:
-  address:
-    socket_address:
-      address: 0.0.0.0
-      port_value: 443
-  listener_filters:
-    - name: envoy.filters.listener.tls_inspector
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
-
 ---
 # Production Backend Cluster (high availability settings)
 apiVersion: envoyxds.io/v1alpha1
@@ -107,7 +87,7 @@ metadata:
     clusters: "production"
 spec:
   listener_refs:
-    - http-production
+    - http
   stat_prefix: production
   use_remote_address: true
   generate_request_id: true
@@ -142,21 +122,6 @@ spec:
 # STAGING ENVIRONMENT
 # Target: Envoy with node.cluster=staging
 # =============================================================================
-
----
-# Staging HTTP Listener
-apiVersion: envoyxds.io/v1alpha1
-kind: Listener
-metadata:
-  name: http-staging
-  namespace: xds-system
-  annotations:
-    clusters: "staging"  # Only sent to staging Envoys
-spec:
-  address:
-    socket_address:
-      address: 0.0.0.0
-      port_value: 8080
 
 ---
 # Staging Backend Cluster (relaxed settings for testing)
@@ -200,7 +165,7 @@ metadata:
     clusters: "staging"
 spec:
   listener_refs:
-    - http-staging
+    - http
   stat_prefix: staging
   use_remote_address: true
   generate_request_id: true
@@ -221,90 +186,6 @@ spec:
             route:
               cluster: backend-staging
               timeout: 30s  # Longer timeout for debugging
-  http_filters:
-    - name: envoy.filters.http.router
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-
-# =============================================================================
-# SHARED RESOURCES (sent to both environments)
-# Target: Multiple clusters using comma-separated values
-# =============================================================================
-
----
-# Shared metrics/health cluster (sent to both prod and staging)
-apiVersion: envoyxds.io/v1alpha1
-kind: Cluster
-metadata:
-  name: metrics-backend
-  namespace: xds-system
-  annotations:
-    clusters: "production,staging"  # Both environments
-spec:
-  connect_timeout: 5s
-  type: STRICT_DNS
-  lb_policy: ROUND_ROBIN
-  load_assignment:
-    cluster_name: metrics-backend
-    endpoints:
-      - lb_endpoints:
-          - endpoint:
-              address:
-                socket_address:
-                  address: prometheus.monitoring.svc.cluster.local
-                  port_value: 9090
-
-# =============================================================================
-# SPECIFIC NODE TARGETING
-# Target: Specific Envoy nodes within a cluster
-# =============================================================================
-
----
-# Canary listener (only to specific nodes)
-apiVersion: envoyxds.io/v1alpha1
-kind: Listener
-metadata:
-  name: http-canary
-  namespace: xds-system
-  annotations:
-    clusters: "production"
-    nodes: "envoy-canary-01,envoy-canary-02"  # Only these specific nodes
-spec:
-  address:
-    socket_address:
-      address: 0.0.0.0
-      port_value: 8081
-
----
-# Canary route with experimental features
-apiVersion: envoyxds.io/v1alpha1
-kind: Route
-metadata:
-  name: route-canary
-  namespace: xds-system
-  annotations:
-    clusters: "production"
-    nodes: "envoy-canary-01,envoy-canary-02"
-spec:
-  listener_refs:
-    - http-canary
-  stat_prefix: canary
-  route_config:
-    name: canary_route
-    virtual_hosts:
-      - name: canary
-        domains:
-          - "*"
-        response_headers_to_add:
-          - header:
-              key: x-canary
-              value: "true"
-        routes:
-          - match:
-              prefix: /
-            route:
-              cluster: backend-production
-              timeout: 10s
   http_filters:
     - name: envoy.filters.http.router
       typed_config:

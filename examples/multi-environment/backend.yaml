@@ -1,0 +1,330 @@
+# Backend Services for Multi-Environment Example
+# Simple nginx backends to verify environment targeting
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+
+# =============================================================================
+# PRODUCTION BACKEND
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-html
+  namespace: production
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head><title>Production</title></head>
+    <body>
+      <h1>PRODUCTION</h1>
+      <p>Environment: production</p>
+    </body>
+    </html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-prod
+  namespace: production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-prod
+  template:
+    metadata:
+      labels:
+        app: backend-prod
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html
+        configMap:
+          name: nginx-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-prod
+  namespace: production
+spec:
+  selector:
+    app: backend-prod
+  ports:
+  - port: 80
+    targetPort: 80
+
+# =============================================================================
+# PRODUCTION ENVOY (node.cluster: production)
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+  namespace: production
+data:
+  envoy.yaml: |
+    node:
+      cluster: production
+      id: global
+    admin:
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+    dynamic_resources:
+      lds_config:
+        ads: {}
+        resource_api_version: V3
+      cds_config:
+        ads: {}
+        resource_api_version: V3
+      ads_config:
+        api_type: GRPC
+        transport_api_version: V3
+        grpc_services:
+          envoy_grpc:
+            cluster_name: xds_cluster
+    static_resources:
+      clusters:
+        - name: xds_cluster
+          connect_timeout: 5s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options: {}
+          load_assignment:
+            cluster_name: xds_cluster
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: xds-controller.xds-system.svc.cluster.local
+                          port_value: 18000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy
+  namespace: production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: envoy
+  template:
+    metadata:
+      labels:
+        app: envoy
+    spec:
+      containers:
+      - name: envoy
+        image: envoyproxy/envoy:v1.36-latest
+        ports:
+        - containerPort: 8080
+        - containerPort: 9901
+        volumeMounts:
+        - name: config
+          mountPath: /etc/envoy
+        args: ["-c", "/etc/envoy/envoy.yaml"]
+      volumes:
+      - name: config
+        configMap:
+          name: envoy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy
+  namespace: production
+spec:
+  selector:
+    app: envoy
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: admin
+    port: 9901
+    targetPort: 9901
+
+# =============================================================================
+# STAGING BACKEND
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-html
+  namespace: staging
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head><title>Staging</title></head>
+    <body>
+      <h1>STAGING</h1>
+      <p>Environment: staging</p>
+    </body>
+    </html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-staging
+  namespace: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-staging
+  template:
+    metadata:
+      labels:
+        app: backend-staging
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html
+        configMap:
+          name: nginx-html
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-staging
+  namespace: staging
+spec:
+  selector:
+    app: backend-staging
+  ports:
+  - port: 80
+    targetPort: 80
+
+# =============================================================================
+# STAGING ENVOY (node.cluster: staging)
+# =============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+  namespace: staging
+data:
+  envoy.yaml: |
+    node:
+      cluster: staging
+      id: global
+    admin:
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+    dynamic_resources:
+      lds_config:
+        ads: {}
+        resource_api_version: V3
+      cds_config:
+        ads: {}
+        resource_api_version: V3
+      ads_config:
+        api_type: GRPC
+        transport_api_version: V3
+        grpc_services:
+          envoy_grpc:
+            cluster_name: xds_cluster
+    static_resources:
+      clusters:
+        - name: xds_cluster
+          connect_timeout: 5s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options: {}
+          load_assignment:
+            cluster_name: xds_cluster
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: xds-controller.xds-system.svc.cluster.local
+                          port_value: 18000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy
+  namespace: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: envoy
+  template:
+    metadata:
+      labels:
+        app: envoy
+    spec:
+      containers:
+      - name: envoy
+        image: envoyproxy/envoy:v1.36-latest
+        ports:
+        - containerPort: 8080
+        - containerPort: 9901
+        volumeMounts:
+        - name: config
+          mountPath: /etc/envoy
+        args: ["-c", "/etc/envoy/envoy.yaml"]
+      volumes:
+      - name: config
+        configMap:
+          name: envoy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy
+  namespace: staging
+spec:
+  selector:
+    app: envoy
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: admin
+    port: 9901
+    targetPort: 9901
