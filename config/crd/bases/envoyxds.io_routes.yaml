@@ -72,15 +72,8 @@ spec:
                         configuration.
                       properties:
                         and_filter:
-                          description: AndFilter represents the Envoy AndFilter configuration.
-                          properties:
-                            filters:
-                              items:
-                                type: object
-                                x-kubernetes-preserve-unknown-fields: true
-                              type: array
-                              x-kubernetes-preserve-unknown-fields: true
                           type: object
+                          x-kubernetes-preserve-unknown-fields: true
                         duration_filter:
                           description: DurationFilter represents the Envoy DurationFilter
                             configuration.
@@ -226,15 +219,8 @@ spec:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
                         or_filter:
-                          description: OrFilter represents the Envoy OrFilter configuration.
-                          properties:
-                            filters:
-                              items:
-                                type: object
-                                x-kubernetes-preserve-unknown-fields: true
-                              type: array
-                              x-kubernetes-preserve-unknown-fields: true
                           type: object
+                          x-kubernetes-preserve-unknown-fields: true
                         response_flag_filter:
                           description: ResponseFlagFilter represents the Envoy ResponseFlagFilter
                             configuration.
@@ -485,20 +471,20 @@ spec:
                                     description: GrpcService represents the Envoy
                                       GrpcService configuration.
                                     properties:
-                                      access_token:
-                                        type: string
                                       envoy_grpc:
                                         type: object
                                         x-kubernetes-preserve-unknown-fields: true
-                                      google_compute_engine:
-                                        type: boolean
+                                      from_plugin:
+                                        type: object
+                                        x-kubernetes-preserve-unknown-fields: true
                                       google_default:
                                         type: boolean
                                       google_grpc:
                                         type: object
                                         x-kubernetes-preserve-unknown-fields: true
-                                      google_refresh_token:
-                                        type: string
+                                      google_iam:
+                                        type: object
+                                        x-kubernetes-preserve-unknown-fields: true
                                       initial_metadata:
                                         items:
                                           description: HeaderValue represents the
@@ -513,6 +499,9 @@ spec:
                                               type: string
                                           type: object
                                         type: array
+                                      int_value:
+                                        format: int64
+                                        type: integer
                                       local_credentials:
                                         type: object
                                         x-kubernetes-preserve-unknown-fields: true
@@ -526,9 +515,124 @@ spec:
                                           num_retries:
                                             format: int32
                                             type: integer
+                                          per_try_idle_timeout:
+                                            type: string
+                                          per_try_timeout:
+                                            type: string
+                                          rate_limited_retry_back_off:
+                                            type: object
+                                            x-kubernetes-preserve-unknown-fields: true
+                                          retriable_headers:
+                                            items:
+                                              description: HeaderMatcher represents
+                                                the Envoy HeaderMatcher configuration.
+                                              properties:
+                                                contains_match:
+                                                  type: string
+                                                exact_match:
+                                                  type: string
+                                                invert_match:
+                                                  type: boolean
+                                                name:
+                                                  type: string
+                                                prefix_match:
+                                                  type: string
+                                                present_match:
+                                                  type: boolean
+                                                range_match:
+                                                  description: Int64Range represents
+                                                    the Envoy Int64Range configuration.
+                                                  properties:
+                                                    end:
+                                                      format: int64
+                                                      type: integer
+                                                    start:
+                                                      format: int64
+                                                      type: integer
+                                                  type: object
+                                                safe_regex_match:
+                                                  description: RegexMatcher represents
+                                                    the Envoy RegexMatcher configuration.
+                                                  properties:
+                                                    regex:
+                                                      type: string
+                                                  type: object
+                                                string_match:
+                                                  description: StringMatcher represents
+                                                    the Envoy StringMatcher configuration.
+                                                  properties:
+                                                    ignore_case:
+                                                      type: boolean
+                                                    typed_config:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
+                                                  type: object
+                                                suffix_match:
+                                                  type: string
+                                                treat_missing_header_as_empty:
+                                                  type: boolean
+                                              type: object
+                                            type: array
+                                          retriable_request_headers:
+                                            items:
+                                              description: HeaderMatcher represents
+                                                the Envoy HeaderMatcher configuration.
+                                              properties:
+                                                contains_match:
+                                                  type: string
+                                                exact_match:
+                                                  type: string
+                                                invert_match:
+                                                  type: boolean
+                                                name:
+                                                  type: string
+                                                prefix_match:
+                                                  type: string
+                                                present_match:
+                                                  type: boolean
+                                                range_match:
+                                                  description: Int64Range represents
+                                                    the Envoy Int64Range configuration.
+                                                  properties:
+                                                    end:
+                                                      format: int64
+                                                      type: integer
+                                                    start:
+                                                      format: int64
+                                                      type: integer
+                                                  type: object
+                                                safe_regex_match:
+                                                  description: RegexMatcher represents
+                                                    the Envoy RegexMatcher configuration.
+                                                  properties:
+                                                    regex:
+                                                      type: string
+                                                  type: object
+                                                string_match:
+                                                  description: StringMatcher represents
+                                                    the Envoy StringMatcher configuration.
+                                                  properties:
+                                                    ignore_case:
+                                                      type: boolean
+                                                    typed_config:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
+                                                  type: object
+                                                suffix_match:
+                                                  type: string
+                                                treat_missing_header_as_empty:
+                                                  type: boolean
+                                              type: object
+                                            type: array
+                                          retriable_status_codes:
+                                            items:
+                                              format: int32
+                                              type: integer
+                                            type: array
                                           retry_back_off:
-                                            description: BackoffStrategy represents
-                                              the Envoy BackoffStrategy configuration.
+                                            description: RetryPolicy_RetryBackOff
+                                              represents the Envoy RetryPolicy_RetryBackOff
+                                              configuration.
                                             properties:
                                               base_interval:
                                                 type: string
@@ -550,6 +654,18 @@ spec:
                                             type: array
                                           retry_on:
                                             type: string
+                                          retry_options_predicates:
+                                            items:
+                                              description: TypedExtensionConfig represents
+                                                the Envoy TypedExtensionConfig configuration.
+                                              properties:
+                                                name:
+                                                  type: string
+                                                typed_config:
+                                                  type: object
+                                                  x-kubernetes-preserve-unknown-fields: true
+                                              type: object
+                                            type: array
                                           retry_priority:
                                             description: RetryPolicy_RetryPriority
                                               represents the Envoy RetryPolicy_RetryPriority
@@ -562,16 +678,11 @@ spec:
                                                 x-kubernetes-preserve-unknown-fields: true
                                             type: object
                                         type: object
-                                      ssl_credentials:
+                                      sts_service:
                                         type: object
                                         x-kubernetes-preserve-unknown-fields: true
-                                      string_value:
-                                        type: string
                                       timeout:
                                         type: string
-                                      typed_config:
-                                        type: object
-                                        x-kubernetes-preserve-unknown-fields: true
                                     type: object
                                   type: array
                                 rate_limit_settings:
@@ -941,16 +1052,8 @@ spec:
                             configuration.
                           properties:
                             and_filter:
-                              description: AndFilter represents the Envoy AndFilter
-                                configuration.
-                              properties:
-                                filters:
-                                  items:
-                                    type: object
-                                    x-kubernetes-preserve-unknown-fields: true
-                                  type: array
-                                  x-kubernetes-preserve-unknown-fields: true
                               type: object
+                              x-kubernetes-preserve-unknown-fields: true
                             duration_filter:
                               description: DurationFilter represents the Envoy DurationFilter
                                 configuration.
@@ -1098,16 +1201,8 @@ spec:
                               type: object
                               x-kubernetes-preserve-unknown-fields: true
                             or_filter:
-                              description: OrFilter represents the Envoy OrFilter
-                                configuration.
-                              properties:
-                                filters:
-                                  items:
-                                    type: object
-                                    x-kubernetes-preserve-unknown-fields: true
-                                  type: array
-                                  x-kubernetes-preserve-unknown-fields: true
                               type: object
+                              x-kubernetes-preserve-unknown-fields: true
                             response_flag_filter:
                               description: ResponseFlagFilter represents the Envoy
                                 ResponseFlagFilter configuration.
@@ -1267,8 +1362,6 @@ spec:
                     type: boolean
                   set_recommended_response_code:
                     type: boolean
-                  use_node_id:
-                    type: boolean
                 type: object
               rds:
                 description: Rds represents the Envoy Rds configuration.
@@ -1307,20 +1400,20 @@ spec:
                               description: GrpcService represents the Envoy GrpcService
                                 configuration.
                               properties:
-                                access_token:
-                                  type: string
                                 envoy_grpc:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
-                                google_compute_engine:
-                                  type: boolean
+                                from_plugin:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
                                 google_default:
                                   type: boolean
                                 google_grpc:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
-                                google_refresh_token:
-                                  type: string
+                                google_iam:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
                                 initial_metadata:
                                   items:
                                     description: HeaderValue represents the Envoy
@@ -1335,6 +1428,9 @@ spec:
                                         type: string
                                     type: object
                                   type: array
+                                int_value:
+                                  format: int64
+                                  type: integer
                                 local_credentials:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
@@ -1348,9 +1444,123 @@ spec:
                                     num_retries:
                                       format: int32
                                       type: integer
+                                    per_try_idle_timeout:
+                                      type: string
+                                    per_try_timeout:
+                                      type: string
+                                    rate_limited_retry_back_off:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                    retriable_headers:
+                                      items:
+                                        description: HeaderMatcher represents the
+                                          Envoy HeaderMatcher configuration.
+                                        properties:
+                                          contains_match:
+                                            type: string
+                                          exact_match:
+                                            type: string
+                                          invert_match:
+                                            type: boolean
+                                          name:
+                                            type: string
+                                          prefix_match:
+                                            type: string
+                                          present_match:
+                                            type: boolean
+                                          range_match:
+                                            description: Int64Range represents the
+                                              Envoy Int64Range configuration.
+                                            properties:
+                                              end:
+                                                format: int64
+                                                type: integer
+                                              start:
+                                                format: int64
+                                                type: integer
+                                            type: object
+                                          safe_regex_match:
+                                            description: RegexMatcher represents the
+                                              Envoy RegexMatcher configuration.
+                                            properties:
+                                              regex:
+                                                type: string
+                                            type: object
+                                          string_match:
+                                            description: StringMatcher represents
+                                              the Envoy StringMatcher configuration.
+                                            properties:
+                                              ignore_case:
+                                                type: boolean
+                                              typed_config:
+                                                type: object
+                                                x-kubernetes-preserve-unknown-fields: true
+                                            type: object
+                                          suffix_match:
+                                            type: string
+                                          treat_missing_header_as_empty:
+                                            type: boolean
+                                        type: object
+                                      type: array
+                                    retriable_request_headers:
+                                      items:
+                                        description: HeaderMatcher represents the
+                                          Envoy HeaderMatcher configuration.
+                                        properties:
+                                          contains_match:
+                                            type: string
+                                          exact_match:
+                                            type: string
+                                          invert_match:
+                                            type: boolean
+                                          name:
+                                            type: string
+                                          prefix_match:
+                                            type: string
+                                          present_match:
+                                            type: boolean
+                                          range_match:
+                                            description: Int64Range represents the
+                                              Envoy Int64Range configuration.
+                                            properties:
+                                              end:
+                                                format: int64
+                                                type: integer
+                                              start:
+                                                format: int64
+                                                type: integer
+                                            type: object
+                                          safe_regex_match:
+                                            description: RegexMatcher represents the
+                                              Envoy RegexMatcher configuration.
+                                            properties:
+                                              regex:
+                                                type: string
+                                            type: object
+                                          string_match:
+                                            description: StringMatcher represents
+                                              the Envoy StringMatcher configuration.
+                                            properties:
+                                              ignore_case:
+                                                type: boolean
+                                              typed_config:
+                                                type: object
+                                                x-kubernetes-preserve-unknown-fields: true
+                                            type: object
+                                          suffix_match:
+                                            type: string
+                                          treat_missing_header_as_empty:
+                                            type: boolean
+                                        type: object
+                                      type: array
+                                    retriable_status_codes:
+                                      items:
+                                        format: int32
+                                        type: integer
+                                      type: array
                                     retry_back_off:
-                                      description: BackoffStrategy represents the
-                                        Envoy BackoffStrategy configuration.
+                                      description: RetryPolicy_RetryBackOff represents
+                                        the Envoy RetryPolicy_RetryBackOff configuration.
                                       properties:
                                         base_interval:
                                           type: string
@@ -1372,6 +1582,18 @@ spec:
                                       type: array
                                     retry_on:
                                       type: string
+                                    retry_options_predicates:
+                                      items:
+                                        description: TypedExtensionConfig represents
+                                          the Envoy TypedExtensionConfig configuration.
+                                        properties:
+                                          name:
+                                            type: string
+                                          typed_config:
+                                            type: object
+                                            x-kubernetes-preserve-unknown-fields: true
+                                        type: object
+                                      type: array
                                     retry_priority:
                                       description: RetryPolicy_RetryPriority represents
                                         the Envoy RetryPolicy_RetryPriority configuration.
@@ -1383,16 +1605,11 @@ spec:
                                           x-kubernetes-preserve-unknown-fields: true
                                       type: object
                                   type: object
-                                ssl_credentials:
+                                sts_service:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
-                                string_value:
-                                  type: string
                                 timeout:
                                   type: string
-                                typed_config:
-                                  type: object
-                                  x-kubernetes-preserve-unknown-fields: true
                               type: object
                             type: array
                           rate_limit_settings:
@@ -2583,12 +2800,9 @@ spec:
               scoped_routes:
                 description: ScopedRoutes represents the Envoy ScopedRoutes configuration.
                 properties:
-                  element:
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  header_value_extractor:
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
+                  index:
+                    format: int32
+                    type: integer
                   name:
                     type: string
                   rds_config_source:
@@ -2625,20 +2839,20 @@ spec:
                               description: GrpcService represents the Envoy GrpcService
                                 configuration.
                               properties:
-                                access_token:
-                                  type: string
                                 envoy_grpc:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
-                                google_compute_engine:
-                                  type: boolean
+                                from_plugin:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
                                 google_default:
                                   type: boolean
                                 google_grpc:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
-                                google_refresh_token:
-                                  type: string
+                                google_iam:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
                                 initial_metadata:
                                   items:
                                     description: HeaderValue represents the Envoy
@@ -2653,6 +2867,9 @@ spec:
                                         type: string
                                     type: object
                                   type: array
+                                int_value:
+                                  format: int64
+                                  type: integer
                                 local_credentials:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
@@ -2666,9 +2883,123 @@ spec:
                                     num_retries:
                                       format: int32
                                       type: integer
+                                    per_try_idle_timeout:
+                                      type: string
+                                    per_try_timeout:
+                                      type: string
+                                    rate_limited_retry_back_off:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                    retriable_headers:
+                                      items:
+                                        description: HeaderMatcher represents the
+                                          Envoy HeaderMatcher configuration.
+                                        properties:
+                                          contains_match:
+                                            type: string
+                                          exact_match:
+                                            type: string
+                                          invert_match:
+                                            type: boolean
+                                          name:
+                                            type: string
+                                          prefix_match:
+                                            type: string
+                                          present_match:
+                                            type: boolean
+                                          range_match:
+                                            description: Int64Range represents the
+                                              Envoy Int64Range configuration.
+                                            properties:
+                                              end:
+                                                format: int64
+                                                type: integer
+                                              start:
+                                                format: int64
+                                                type: integer
+                                            type: object
+                                          safe_regex_match:
+                                            description: RegexMatcher represents the
+                                              Envoy RegexMatcher configuration.
+                                            properties:
+                                              regex:
+                                                type: string
+                                            type: object
+                                          string_match:
+                                            description: StringMatcher represents
+                                              the Envoy StringMatcher configuration.
+                                            properties:
+                                              ignore_case:
+                                                type: boolean
+                                              typed_config:
+                                                type: object
+                                                x-kubernetes-preserve-unknown-fields: true
+                                            type: object
+                                          suffix_match:
+                                            type: string
+                                          treat_missing_header_as_empty:
+                                            type: boolean
+                                        type: object
+                                      type: array
+                                    retriable_request_headers:
+                                      items:
+                                        description: HeaderMatcher represents the
+                                          Envoy HeaderMatcher configuration.
+                                        properties:
+                                          contains_match:
+                                            type: string
+                                          exact_match:
+                                            type: string
+                                          invert_match:
+                                            type: boolean
+                                          name:
+                                            type: string
+                                          prefix_match:
+                                            type: string
+                                          present_match:
+                                            type: boolean
+                                          range_match:
+                                            description: Int64Range represents the
+                                              Envoy Int64Range configuration.
+                                            properties:
+                                              end:
+                                                format: int64
+                                                type: integer
+                                              start:
+                                                format: int64
+                                                type: integer
+                                            type: object
+                                          safe_regex_match:
+                                            description: RegexMatcher represents the
+                                              Envoy RegexMatcher configuration.
+                                            properties:
+                                              regex:
+                                                type: string
+                                            type: object
+                                          string_match:
+                                            description: StringMatcher represents
+                                              the Envoy StringMatcher configuration.
+                                            properties:
+                                              ignore_case:
+                                                type: boolean
+                                              typed_config:
+                                                type: object
+                                                x-kubernetes-preserve-unknown-fields: true
+                                            type: object
+                                          suffix_match:
+                                            type: string
+                                          treat_missing_header_as_empty:
+                                            type: boolean
+                                        type: object
+                                      type: array
+                                    retriable_status_codes:
+                                      items:
+                                        format: int32
+                                        type: integer
+                                      type: array
                                     retry_back_off:
-                                      description: BackoffStrategy represents the
-                                        Envoy BackoffStrategy configuration.
+                                      description: RetryPolicy_RetryBackOff represents
+                                        the Envoy RetryPolicy_RetryBackOff configuration.
                                       properties:
                                         base_interval:
                                           type: string
@@ -2690,6 +3021,18 @@ spec:
                                       type: array
                                     retry_on:
                                       type: string
+                                    retry_options_predicates:
+                                      items:
+                                        description: TypedExtensionConfig represents
+                                          the Envoy TypedExtensionConfig configuration.
+                                        properties:
+                                          name:
+                                            type: string
+                                          typed_config:
+                                            type: object
+                                            x-kubernetes-preserve-unknown-fields: true
+                                        type: object
+                                      type: array
                                     retry_priority:
                                       description: RetryPolicy_RetryPriority represents
                                         the Envoy RetryPolicy_RetryPriority configuration.
@@ -2701,16 +3044,11 @@ spec:
                                           x-kubernetes-preserve-unknown-fields: true
                                       type: object
                                   type: object
-                                ssl_credentials:
+                                sts_service:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
-                                string_value:
-                                  type: string
                                 timeout:
                                   type: string
-                                typed_config:
-                                  type: object
-                                  x-kubernetes-preserve-unknown-fields: true
                               type: object
                             type: array
                           rate_limit_settings:
@@ -2804,20 +3142,20 @@ spec:
                                   description: GrpcService represents the Envoy GrpcService
                                     configuration.
                                   properties:
-                                    access_token:
-                                      type: string
                                     envoy_grpc:
                                       type: object
                                       x-kubernetes-preserve-unknown-fields: true
-                                    google_compute_engine:
-                                      type: boolean
+                                    from_plugin:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
                                     google_default:
                                       type: boolean
                                     google_grpc:
                                       type: object
                                       x-kubernetes-preserve-unknown-fields: true
-                                    google_refresh_token:
-                                      type: string
+                                    google_iam:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
                                     initial_metadata:
                                       items:
                                         description: HeaderValue represents the Envoy
@@ -2832,6 +3170,9 @@ spec:
                                             type: string
                                         type: object
                                       type: array
+                                    int_value:
+                                      format: int64
+                                      type: integer
                                     local_credentials:
                                       type: object
                                       x-kubernetes-preserve-unknown-fields: true
@@ -2845,9 +3186,123 @@ spec:
                                         num_retries:
                                           format: int32
                                           type: integer
+                                        per_try_idle_timeout:
+                                          type: string
+                                        per_try_timeout:
+                                          type: string
+                                        rate_limited_retry_back_off:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
+                                        retriable_headers:
+                                          items:
+                                            description: HeaderMatcher represents
+                                              the Envoy HeaderMatcher configuration.
+                                            properties:
+                                              contains_match:
+                                                type: string
+                                              exact_match:
+                                                type: string
+                                              invert_match:
+                                                type: boolean
+                                              name:
+                                                type: string
+                                              prefix_match:
+                                                type: string
+                                              present_match:
+                                                type: boolean
+                                              range_match:
+                                                description: Int64Range represents
+                                                  the Envoy Int64Range configuration.
+                                                properties:
+                                                  end:
+                                                    format: int64
+                                                    type: integer
+                                                  start:
+                                                    format: int64
+                                                    type: integer
+                                                type: object
+                                              safe_regex_match:
+                                                description: RegexMatcher represents
+                                                  the Envoy RegexMatcher configuration.
+                                                properties:
+                                                  regex:
+                                                    type: string
+                                                type: object
+                                              string_match:
+                                                description: StringMatcher represents
+                                                  the Envoy StringMatcher configuration.
+                                                properties:
+                                                  ignore_case:
+                                                    type: boolean
+                                                  typed_config:
+                                                    type: object
+                                                    x-kubernetes-preserve-unknown-fields: true
+                                                type: object
+                                              suffix_match:
+                                                type: string
+                                              treat_missing_header_as_empty:
+                                                type: boolean
+                                            type: object
+                                          type: array
+                                        retriable_request_headers:
+                                          items:
+                                            description: HeaderMatcher represents
+                                              the Envoy HeaderMatcher configuration.
+                                            properties:
+                                              contains_match:
+                                                type: string
+                                              exact_match:
+                                                type: string
+                                              invert_match:
+                                                type: boolean
+                                              name:
+                                                type: string
+                                              prefix_match:
+                                                type: string
+                                              present_match:
+                                                type: boolean
+                                              range_match:
+                                                description: Int64Range represents
+                                                  the Envoy Int64Range configuration.
+                                                properties:
+                                                  end:
+                                                    format: int64
+                                                    type: integer
+                                                  start:
+                                                    format: int64
+                                                    type: integer
+                                                type: object
+                                              safe_regex_match:
+                                                description: RegexMatcher represents
+                                                  the Envoy RegexMatcher configuration.
+                                                properties:
+                                                  regex:
+                                                    type: string
+                                                type: object
+                                              string_match:
+                                                description: StringMatcher represents
+                                                  the Envoy StringMatcher configuration.
+                                                properties:
+                                                  ignore_case:
+                                                    type: boolean
+                                                  typed_config:
+                                                    type: object
+                                                    x-kubernetes-preserve-unknown-fields: true
+                                                type: object
+                                              suffix_match:
+                                                type: string
+                                              treat_missing_header_as_empty:
+                                                type: boolean
+                                            type: object
+                                          type: array
+                                        retriable_status_codes:
+                                          items:
+                                            format: int32
+                                            type: integer
+                                          type: array
                                         retry_back_off:
-                                          description: BackoffStrategy represents
-                                            the Envoy BackoffStrategy configuration.
+                                          description: RetryPolicy_RetryBackOff represents
+                                            the Envoy RetryPolicy_RetryBackOff configuration.
                                           properties:
                                             base_interval:
                                               type: string
@@ -2869,6 +3324,18 @@ spec:
                                           type: array
                                         retry_on:
                                           type: string
+                                        retry_options_predicates:
+                                          items:
+                                            description: TypedExtensionConfig represents
+                                              the Envoy TypedExtensionConfig configuration.
+                                            properties:
+                                              name:
+                                                type: string
+                                              typed_config:
+                                                type: object
+                                                x-kubernetes-preserve-unknown-fields: true
+                                            type: object
+                                          type: array
                                         retry_priority:
                                           description: RetryPolicy_RetryPriority represents
                                             the Envoy RetryPolicy_RetryPriority configuration.
@@ -2880,16 +3347,11 @@ spec:
                                               x-kubernetes-preserve-unknown-fields: true
                                           type: object
                                       type: object
-                                    ssl_credentials:
+                                    sts_service:
                                       type: object
                                       x-kubernetes-preserve-unknown-fields: true
-                                    string_value:
-                                      type: string
                                     timeout:
                                       type: string
-                                    typed_config:
-                                      type: object
-                                      x-kubernetes-preserve-unknown-fields: true
                                   type: object
                                 type: array
                               rate_limit_settings:
@@ -3176,20 +3638,20 @@ spec:
                                                 description: GrpcService represents
                                                   the Envoy GrpcService configuration.
                                                 properties:
-                                                  access_token:
-                                                    type: string
                                                   envoy_grpc:
                                                     type: object
                                                     x-kubernetes-preserve-unknown-fields: true
-                                                  google_compute_engine:
-                                                    type: boolean
+                                                  from_plugin:
+                                                    type: object
+                                                    x-kubernetes-preserve-unknown-fields: true
                                                   google_default:
                                                     type: boolean
                                                   google_grpc:
                                                     type: object
                                                     x-kubernetes-preserve-unknown-fields: true
-                                                  google_refresh_token:
-                                                    type: string
+                                                  google_iam:
+                                                    type: object
+                                                    x-kubernetes-preserve-unknown-fields: true
                                                   initial_metadata:
                                                     items:
                                                       description: HeaderValue represents
@@ -3204,6 +3666,9 @@ spec:
                                                           type: string
                                                       type: object
                                                     type: array
+                                                  int_value:
+                                                    format: int64
+                                                    type: integer
                                                   local_credentials:
                                                     type: object
                                                     x-kubernetes-preserve-unknown-fields: true
@@ -3217,9 +3682,131 @@ spec:
                                                       num_retries:
                                                         format: int32
                                                         type: integer
+                                                      per_try_idle_timeout:
+                                                        type: string
+                                                      per_try_timeout:
+                                                        type: string
+                                                      rate_limited_retry_back_off:
+                                                        type: object
+                                                        x-kubernetes-preserve-unknown-fields: true
+                                                      retriable_headers:
+                                                        items:
+                                                          description: HeaderMatcher
+                                                            represents the Envoy HeaderMatcher
+                                                            configuration.
+                                                          properties:
+                                                            contains_match:
+                                                              type: string
+                                                            exact_match:
+                                                              type: string
+                                                            invert_match:
+                                                              type: boolean
+                                                            name:
+                                                              type: string
+                                                            prefix_match:
+                                                              type: string
+                                                            present_match:
+                                                              type: boolean
+                                                            range_match:
+                                                              description: Int64Range
+                                                                represents the Envoy
+                                                                Int64Range configuration.
+                                                              properties:
+                                                                end:
+                                                                  format: int64
+                                                                  type: integer
+                                                                start:
+                                                                  format: int64
+                                                                  type: integer
+                                                              type: object
+                                                            safe_regex_match:
+                                                              description: RegexMatcher
+                                                                represents the Envoy
+                                                                RegexMatcher configuration.
+                                                              properties:
+                                                                regex:
+                                                                  type: string
+                                                              type: object
+                                                            string_match:
+                                                              description: StringMatcher
+                                                                represents the Envoy
+                                                                StringMatcher configuration.
+                                                              properties:
+                                                                ignore_case:
+                                                                  type: boolean
+                                                                typed_config:
+                                                                  type: object
+                                                                  x-kubernetes-preserve-unknown-fields: true
+                                                              type: object
+                                                            suffix_match:
+                                                              type: string
+                                                            treat_missing_header_as_empty:
+                                                              type: boolean
+                                                          type: object
+                                                        type: array
+                                                      retriable_request_headers:
+                                                        items:
+                                                          description: HeaderMatcher
+                                                            represents the Envoy HeaderMatcher
+                                                            configuration.
+                                                          properties:
+                                                            contains_match:
+                                                              type: string
+                                                            exact_match:
+                                                              type: string
+                                                            invert_match:
+                                                              type: boolean
+                                                            name:
+                                                              type: string
+                                                            prefix_match:
+                                                              type: string
+                                                            present_match:
+                                                              type: boolean
+                                                            range_match:
+                                                              description: Int64Range
+                                                                represents the Envoy
+                                                                Int64Range configuration.
+                                                              properties:
+                                                                end:
+                                                                  format: int64
+                                                                  type: integer
+                                                                start:
+                                                                  format: int64
+                                                                  type: integer
+                                                              type: object
+                                                            safe_regex_match:
+                                                              description: RegexMatcher
+                                                                represents the Envoy
+                                                                RegexMatcher configuration.
+                                                              properties:
+                                                                regex:
+                                                                  type: string
+                                                              type: object
+                                                            string_match:
+                                                              description: StringMatcher
+                                                                represents the Envoy
+                                                                StringMatcher configuration.
+                                                              properties:
+                                                                ignore_case:
+                                                                  type: boolean
+                                                                typed_config:
+                                                                  type: object
+                                                                  x-kubernetes-preserve-unknown-fields: true
+                                                              type: object
+                                                            suffix_match:
+                                                              type: string
+                                                            treat_missing_header_as_empty:
+                                                              type: boolean
+                                                          type: object
+                                                        type: array
+                                                      retriable_status_codes:
+                                                        items:
+                                                          format: int32
+                                                          type: integer
+                                                        type: array
                                                       retry_back_off:
-                                                        description: BackoffStrategy
-                                                          represents the Envoy BackoffStrategy
+                                                        description: RetryPolicy_RetryBackOff
+                                                          represents the Envoy RetryPolicy_RetryBackOff
                                                           configuration.
                                                         properties:
                                                           base_interval:
@@ -3242,6 +3829,19 @@ spec:
                                                         type: array
                                                       retry_on:
                                                         type: string
+                                                      retry_options_predicates:
+                                                        items:
+                                                          description: TypedExtensionConfig
+                                                            represents the Envoy TypedExtensionConfig
+                                                            configuration.
+                                                          properties:
+                                                            name:
+                                                              type: string
+                                                            typed_config:
+                                                              type: object
+                                                              x-kubernetes-preserve-unknown-fields: true
+                                                          type: object
+                                                        type: array
                                                       retry_priority:
                                                         description: RetryPolicy_RetryPriority
                                                           represents the Envoy RetryPolicy_RetryPriority
@@ -3254,16 +3854,11 @@ spec:
                                                             x-kubernetes-preserve-unknown-fields: true
                                                         type: object
                                                     type: object
-                                                  ssl_credentials:
+                                                  sts_service:
                                                     type: object
                                                     x-kubernetes-preserve-unknown-fields: true
-                                                  string_value:
-                                                    type: string
                                                   timeout:
                                                     type: string
-                                                  typed_config:
-                                                    type: object
-                                                    x-kubernetes-preserve-unknown-fields: true
                                                 type: object
                                               type: array
                                             rate_limit_settings:
@@ -3653,9 +4248,124 @@ spec:
                                           num_retries:
                                             format: int32
                                             type: integer
+                                          per_try_idle_timeout:
+                                            type: string
+                                          per_try_timeout:
+                                            type: string
+                                          rate_limited_retry_back_off:
+                                            type: object
+                                            x-kubernetes-preserve-unknown-fields: true
+                                          retriable_headers:
+                                            items:
+                                              description: HeaderMatcher represents
+                                                the Envoy HeaderMatcher configuration.
+                                              properties:
+                                                contains_match:
+                                                  type: string
+                                                exact_match:
+                                                  type: string
+                                                invert_match:
+                                                  type: boolean
+                                                name:
+                                                  type: string
+                                                prefix_match:
+                                                  type: string
+                                                present_match:
+                                                  type: boolean
+                                                range_match:
+                                                  description: Int64Range represents
+                                                    the Envoy Int64Range configuration.
+                                                  properties:
+                                                    end:
+                                                      format: int64
+                                                      type: integer
+                                                    start:
+                                                      format: int64
+                                                      type: integer
+                                                  type: object
+                                                safe_regex_match:
+                                                  description: RegexMatcher represents
+                                                    the Envoy RegexMatcher configuration.
+                                                  properties:
+                                                    regex:
+                                                      type: string
+                                                  type: object
+                                                string_match:
+                                                  description: StringMatcher represents
+                                                    the Envoy StringMatcher configuration.
+                                                  properties:
+                                                    ignore_case:
+                                                      type: boolean
+                                                    typed_config:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
+                                                  type: object
+                                                suffix_match:
+                                                  type: string
+                                                treat_missing_header_as_empty:
+                                                  type: boolean
+                                              type: object
+                                            type: array
+                                          retriable_request_headers:
+                                            items:
+                                              description: HeaderMatcher represents
+                                                the Envoy HeaderMatcher configuration.
+                                              properties:
+                                                contains_match:
+                                                  type: string
+                                                exact_match:
+                                                  type: string
+                                                invert_match:
+                                                  type: boolean
+                                                name:
+                                                  type: string
+                                                prefix_match:
+                                                  type: string
+                                                present_match:
+                                                  type: boolean
+                                                range_match:
+                                                  description: Int64Range represents
+                                                    the Envoy Int64Range configuration.
+                                                  properties:
+                                                    end:
+                                                      format: int64
+                                                      type: integer
+                                                    start:
+                                                      format: int64
+                                                      type: integer
+                                                  type: object
+                                                safe_regex_match:
+                                                  description: RegexMatcher represents
+                                                    the Envoy RegexMatcher configuration.
+                                                  properties:
+                                                    regex:
+                                                      type: string
+                                                  type: object
+                                                string_match:
+                                                  description: StringMatcher represents
+                                                    the Envoy StringMatcher configuration.
+                                                  properties:
+                                                    ignore_case:
+                                                      type: boolean
+                                                    typed_config:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
+                                                  type: object
+                                                suffix_match:
+                                                  type: string
+                                                treat_missing_header_as_empty:
+                                                  type: boolean
+                                              type: object
+                                            type: array
+                                          retriable_status_codes:
+                                            items:
+                                              format: int32
+                                              type: integer
+                                            type: array
                                           retry_back_off:
-                                            description: BackoffStrategy represents
-                                              the Envoy BackoffStrategy configuration.
+                                            description: RetryPolicy_RetryBackOff
+                                              represents the Envoy RetryPolicy_RetryBackOff
+                                              configuration.
                                             properties:
                                               base_interval:
                                                 type: string
@@ -3677,6 +4387,18 @@ spec:
                                             type: array
                                           retry_on:
                                             type: string
+                                          retry_options_predicates:
+                                            items:
+                                              description: TypedExtensionConfig represents
+                                                the Envoy TypedExtensionConfig configuration.
+                                              properties:
+                                                name:
+                                                  type: string
+                                                typed_config:
+                                                  type: object
+                                                  x-kubernetes-preserve-unknown-fields: true
+                                              type: object
+                                            type: array
                                           retry_priority:
                                             description: RetryPolicy_RetryPriority
                                               represents the Envoy RetryPolicy_RetryPriority
@@ -4166,20 +4888,20 @@ spec:
                                           description: GrpcService represents the
                                             Envoy GrpcService configuration.
                                           properties:
-                                            access_token:
-                                              type: string
                                             envoy_grpc:
                                               type: object
                                               x-kubernetes-preserve-unknown-fields: true
-                                            google_compute_engine:
-                                              type: boolean
+                                            from_plugin:
+                                              type: object
+                                              x-kubernetes-preserve-unknown-fields: true
                                             google_default:
                                               type: boolean
                                             google_grpc:
                                               type: object
                                               x-kubernetes-preserve-unknown-fields: true
-                                            google_refresh_token:
-                                              type: string
+                                            google_iam:
+                                              type: object
+                                              x-kubernetes-preserve-unknown-fields: true
                                             initial_metadata:
                                               items:
                                                 description: HeaderValue represents
@@ -4194,6 +4916,9 @@ spec:
                                                     type: string
                                                 type: object
                                               type: array
+                                            int_value:
+                                              format: int64
+                                              type: integer
                                             local_credentials:
                                               type: object
                                               x-kubernetes-preserve-unknown-fields: true
@@ -4207,9 +4932,128 @@ spec:
                                                 num_retries:
                                                   format: int32
                                                   type: integer
+                                                per_try_idle_timeout:
+                                                  type: string
+                                                per_try_timeout:
+                                                  type: string
+                                                rate_limited_retry_back_off:
+                                                  type: object
+                                                  x-kubernetes-preserve-unknown-fields: true
+                                                retriable_headers:
+                                                  items:
+                                                    description: HeaderMatcher represents
+                                                      the Envoy HeaderMatcher configuration.
+                                                    properties:
+                                                      contains_match:
+                                                        type: string
+                                                      exact_match:
+                                                        type: string
+                                                      invert_match:
+                                                        type: boolean
+                                                      name:
+                                                        type: string
+                                                      prefix_match:
+                                                        type: string
+                                                      present_match:
+                                                        type: boolean
+                                                      range_match:
+                                                        description: Int64Range represents
+                                                          the Envoy Int64Range configuration.
+                                                        properties:
+                                                          end:
+                                                            format: int64
+                                                            type: integer
+                                                          start:
+                                                            format: int64
+                                                            type: integer
+                                                        type: object
+                                                      safe_regex_match:
+                                                        description: RegexMatcher
+                                                          represents the Envoy RegexMatcher
+                                                          configuration.
+                                                        properties:
+                                                          regex:
+                                                            type: string
+                                                        type: object
+                                                      string_match:
+                                                        description: StringMatcher
+                                                          represents the Envoy StringMatcher
+                                                          configuration.
+                                                        properties:
+                                                          ignore_case:
+                                                            type: boolean
+                                                          typed_config:
+                                                            type: object
+                                                            x-kubernetes-preserve-unknown-fields: true
+                                                        type: object
+                                                      suffix_match:
+                                                        type: string
+                                                      treat_missing_header_as_empty:
+                                                        type: boolean
+                                                    type: object
+                                                  type: array
+                                                retriable_request_headers:
+                                                  items:
+                                                    description: HeaderMatcher represents
+                                                      the Envoy HeaderMatcher configuration.
+                                                    properties:
+                                                      contains_match:
+                                                        type: string
+                                                      exact_match:
+                                                        type: string
+                                                      invert_match:
+                                                        type: boolean
+                                                      name:
+                                                        type: string
+                                                      prefix_match:
+                                                        type: string
+                                                      present_match:
+                                                        type: boolean
+                                                      range_match:
+                                                        description: Int64Range represents
+                                                          the Envoy Int64Range configuration.
+                                                        properties:
+                                                          end:
+                                                            format: int64
+                                                            type: integer
+                                                          start:
+                                                            format: int64
+                                                            type: integer
+                                                        type: object
+                                                      safe_regex_match:
+                                                        description: RegexMatcher
+                                                          represents the Envoy RegexMatcher
+                                                          configuration.
+                                                        properties:
+                                                          regex:
+                                                            type: string
+                                                        type: object
+                                                      string_match:
+                                                        description: StringMatcher
+                                                          represents the Envoy StringMatcher
+                                                          configuration.
+                                                        properties:
+                                                          ignore_case:
+                                                            type: boolean
+                                                          typed_config:
+                                                            type: object
+                                                            x-kubernetes-preserve-unknown-fields: true
+                                                        type: object
+                                                      suffix_match:
+                                                        type: string
+                                                      treat_missing_header_as_empty:
+                                                        type: boolean
+                                                    type: object
+                                                  type: array
+                                                retriable_status_codes:
+                                                  items:
+                                                    format: int32
+                                                    type: integer
+                                                  type: array
                                                 retry_back_off:
-                                                  description: BackoffStrategy represents
-                                                    the Envoy BackoffStrategy configuration.
+                                                  description: RetryPolicy_RetryBackOff
+                                                    represents the Envoy RetryPolicy_RetryBackOff
+                                                    configuration.
                                                   properties:
                                                     base_interval:
                                                       type: string
@@ -4231,6 +5075,19 @@ spec:
                                                   type: array
                                                 retry_on:
                                                   type: string
+                                                retry_options_predicates:
+                                                  items:
+                                                    description: TypedExtensionConfig
+                                                      represents the Envoy TypedExtensionConfig
+                                                      configuration.
+                                                    properties:
+                                                      name:
+                                                        type: string
+                                                      typed_config:
+                                                        type: object
+                                                        x-kubernetes-preserve-unknown-fields: true
+                                                    type: object
+                                                  type: array
                                                 retry_priority:
                                                   description: RetryPolicy_RetryPriority
                                                     represents the Envoy RetryPolicy_RetryPriority
@@ -4243,16 +5100,11 @@ spec:
                                                       x-kubernetes-preserve-unknown-fields: true
                                                   type: object
                                               type: object
-                                            ssl_credentials:
+                                            sts_service:
                                               type: object
                                               x-kubernetes-preserve-unknown-fields: true
-                                            string_value:
-                                              type: string
                                             timeout:
                                               type: string
-                                            typed_config:
-                                              type: object
-                                              x-kubernetes-preserve-unknown-fields: true
                                           type: object
                                         type: array
                                       rate_limit_settings:
@@ -4328,6 +5180,8 @@ spec:
                       type: string
                   type: object
                 type: array
+              use_node_id:
+                type: boolean
               use_remote_address:
                 type: boolean
               via:

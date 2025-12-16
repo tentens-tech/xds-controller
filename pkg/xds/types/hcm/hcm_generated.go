@@ -736,6 +736,7 @@ type HCM struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	RouteConfig                                *runtime.RawExtension                              `json:"route_config,omitempty"`
 	ScopedRoutes                               *ScopedRoutes                                      `json:"scoped_routes,omitempty"`
+	UseNodeId                                  bool                                               `json:"use_node_id,omitempty"`
 	LiteralProxyName                           string                                             `json:"literal_proxy_name,omitempty"`
 	HttpFilters                                []*HttpFilter                                      `json:"http_filters,omitempty"`
 	AddUserAgent                               *bool                                              `json:"add_user_agent,omitempty"`
@@ -802,7 +803,7 @@ func (in *HCM) DeepCopyInto(out *HCM) {
 	if in.RouteConfig != nil {
 		in, out := &in.RouteConfig, &out.RouteConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.ScopedRoutes != nil {
 		in, out := &in.ScopedRoutes, &out.ScopedRoutes
@@ -1015,7 +1016,7 @@ func (in *AccessLog) DeepCopyInto(out *AccessLog) {
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Filter != nil {
 		in, out := &in.Filter, &out.Filter
@@ -1031,10 +1032,12 @@ type AccessLogFilter struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	NotHealthCheckFilter *runtime.RawExtension `json:"not_health_check_filter,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
-	TraceableFilter    *runtime.RawExtension `json:"traceable_filter,omitempty"`
-	RuntimeFilter      *RuntimeFilter        `json:"runtime_filter,omitempty"`
-	AndFilter          *AndFilter            `json:"and_filter,omitempty"`
-	OrFilter           *OrFilter             `json:"or_filter,omitempty"`
+	TraceableFilter *runtime.RawExtension `json:"traceable_filter,omitempty"`
+	RuntimeFilter   *RuntimeFilter        `json:"runtime_filter,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	AndFilter *runtime.RawExtension `json:"and_filter,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	OrFilter           *runtime.RawExtension `json:"or_filter,omitempty"`
 	HeaderFilter       *HeaderFilter         `json:"header_filter,omitempty"`
 	ResponseFlagFilter *ResponseFlagFilter   `json:"response_flag_filter,omitempty"`
 	GrpcStatusFilter   *GrpcStatusFilter     `json:"grpc_status_filter,omitempty"`
@@ -1059,12 +1062,12 @@ func (in *AccessLogFilter) DeepCopyInto(out *AccessLogFilter) {
 	if in.NotHealthCheckFilter != nil {
 		in, out := &in.NotHealthCheckFilter, &out.NotHealthCheckFilter
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.TraceableFilter != nil {
 		in, out := &in.TraceableFilter, &out.TraceableFilter
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.RuntimeFilter != nil {
 		in, out := &in.RuntimeFilter, &out.RuntimeFilter
@@ -1073,12 +1076,12 @@ func (in *AccessLogFilter) DeepCopyInto(out *AccessLogFilter) {
 	}
 	if in.AndFilter != nil {
 		in, out := &in.AndFilter, &out.AndFilter
-		*out = new(AndFilter)
+		*out = new(runtime.RawExtension)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.OrFilter != nil {
 		in, out := &in.OrFilter, &out.OrFilter
-		*out = new(OrFilter)
+		*out = new(runtime.RawExtension)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.HeaderFilter != nil {
@@ -1115,8 +1118,7 @@ func (in *AccessLogFilter) DeepCopyInto(out *AccessLogFilter) {
 
 // AndFilter represents the Envoy AndFilter configuration.
 type AndFilter struct {
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Filters []*runtime.RawExtension `json:"filters,omitempty"`
+	Filters []*AccessLogFilter `json:"filters,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
@@ -1124,11 +1126,11 @@ func (in *AndFilter) DeepCopyInto(out *AndFilter) {
 	*out = *in
 	if in.Filters != nil {
 		in, out := &in.Filters, &out.Filters
-		*out = make([]*runtime.RawExtension, len(*in))
+		*out = make([]*AccessLogFilter, len(*in))
 		for i := range *in {
 			if (*in)[i] != nil {
-				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*out)[i] = new(AccessLogFilter)
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
@@ -1189,27 +1191,6 @@ func (in *ApiConfigSource) DeepCopyInto(out *ApiConfigSource) {
 				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
-	}
-}
-
-// BackoffStrategy represents the Envoy BackoffStrategy configuration.
-type BackoffStrategy struct {
-	BaseInterval *string `json:"base_interval,omitempty"`
-	MaxInterval  *string `json:"max_interval,omitempty"`
-}
-
-// DeepCopyInto copies the receiver into out.
-func (in *BackoffStrategy) DeepCopyInto(out *BackoffStrategy) {
-	*out = *in
-	if in.BaseInterval != nil {
-		in, out := &in.BaseInterval, &out.BaseInterval
-		*out = new(string)
-		**out = **in
-	}
-	if in.MaxInterval != nil {
-		in, out := &in.MaxInterval, &out.MaxInterval
-		*out = new(string)
-		**out = **in
 	}
 }
 
@@ -1289,7 +1270,7 @@ func (in *ConfigSource) DeepCopyInto(out *ConfigSource) {
 	if in.Ads != nil {
 		in, out := &in.Ads, &out.Ads
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Self != nil {
 		in, out := &in.Self, &out.Self
@@ -1469,7 +1450,7 @@ func (in *ExtensionConfigSource) DeepCopyInto(out *ExtensionConfigSource) {
 	if in.DefaultConfig != nil {
 		in, out := &in.DefaultConfig, &out.DefaultConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.TypeUrls != nil {
 		in, out := &in.TypeUrls, &out.TypeUrls
@@ -1491,7 +1472,7 @@ func (in *ExtensionFilter) DeepCopyInto(out *ExtensionFilter) {
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -1507,7 +1488,7 @@ func (in *FilterAction) DeepCopyInto(out *FilterAction) {
 	if in.Action != nil {
 		in, out := &in.Action, &out.Action
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -1537,18 +1518,17 @@ type GrpcService struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	EnvoyGrpc *runtime.RawExtension `json:"envoy_grpc,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
-	GoogleGrpc *runtime.RawExtension `json:"google_grpc,omitempty"`
+	GoogleGrpc    *runtime.RawExtension `json:"google_grpc,omitempty"`
+	GoogleDefault *bool                 `json:"google_default,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
-	SslCredentials *runtime.RawExtension `json:"ssl_credentials,omitempty"`
-	GoogleDefault  *bool                 `json:"google_default,omitempty"`
+	LocalCredentials *runtime.RawExtension `json:"local_credentials,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
-	LocalCredentials    *runtime.RawExtension `json:"local_credentials,omitempty"`
-	AccessToken         string                `json:"access_token,omitempty"`
-	GoogleComputeEngine *bool                 `json:"google_compute_engine,omitempty"`
-	GoogleRefreshToken  string                `json:"google_refresh_token,omitempty"`
+	GoogleIam *runtime.RawExtension `json:"google_iam,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
-	TypedConfig     *runtime.RawExtension `json:"typed_config,omitempty"`
-	StringValue     string                `json:"string_value,omitempty"`
+	FromPlugin *runtime.RawExtension `json:"from_plugin,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	StsService      *runtime.RawExtension `json:"sts_service,omitempty"`
+	IntValue        int64                 `json:"int_value,omitempty"`
 	Timeout         *string               `json:"timeout,omitempty"`
 	InitialMetadata []*HeaderValue        `json:"initial_metadata,omitempty"`
 	RetryPolicy     *RetryPolicy          `json:"retry_policy,omitempty"`
@@ -1560,17 +1540,12 @@ func (in *GrpcService) DeepCopyInto(out *GrpcService) {
 	if in.EnvoyGrpc != nil {
 		in, out := &in.EnvoyGrpc, &out.EnvoyGrpc
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.GoogleGrpc != nil {
 		in, out := &in.GoogleGrpc, &out.GoogleGrpc
 		*out = new(runtime.RawExtension)
-		**out = **in
-	}
-	if in.SslCredentials != nil {
-		in, out := &in.SslCredentials, &out.SslCredentials
-		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.GoogleDefault != nil {
 		in, out := &in.GoogleDefault, &out.GoogleDefault
@@ -1580,17 +1555,22 @@ func (in *GrpcService) DeepCopyInto(out *GrpcService) {
 	if in.LocalCredentials != nil {
 		in, out := &in.LocalCredentials, &out.LocalCredentials
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
-	if in.GoogleComputeEngine != nil {
-		in, out := &in.GoogleComputeEngine, &out.GoogleComputeEngine
-		*out = new(bool)
-		**out = **in
-	}
-	if in.TypedConfig != nil {
-		in, out := &in.TypedConfig, &out.TypedConfig
+	if in.GoogleIam != nil {
+		in, out := &in.GoogleIam, &out.GoogleIam
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
+	}
+	if in.FromPlugin != nil {
+		in, out := &in.FromPlugin, &out.FromPlugin
+		*out = new(runtime.RawExtension)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.StsService != nil {
+		in, out := &in.StsService, &out.StsService
+		*out = new(runtime.RawExtension)
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Timeout != nil {
 		in, out := &in.Timeout, &out.Timeout
@@ -1640,12 +1620,12 @@ func (in *GrpcService_EnvoyGrpc) DeepCopyInto(out *GrpcService_EnvoyGrpc) {
 
 // GrpcService_GoogleGrpc represents the Envoy GrpcService_GoogleGrpc configuration.
 type GrpcService_GoogleGrpc struct {
-	TargetUri string `json:"target_uri,omitempty"`
+	TargetUri          string                                     `json:"target_uri,omitempty"`
+	ChannelCredentials *GrpcService_GoogleGrpc_ChannelCredentials `json:"channel_credentials,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
-	ChannelCredentials *runtime.RawExtension `json:"channel_credentials,omitempty"`
+	ChannelCredentialsPlugin []*runtime.RawExtension `json:"channel_credentials_plugin,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
-	ChannelCredentialsPlugin []*runtime.RawExtension                   `json:"channel_credentials_plugin,omitempty"`
-	CallCredentials          []*GrpcService_GoogleGrpc_CallCredentials `json:"call_credentials,omitempty"`
+	CallCredentials []*runtime.RawExtension `json:"call_credentials,omitempty"`
 	// +kubebuilder:pruning:PreserveUnknownFields
 	CallCredentialsPlugin  []*runtime.RawExtension `json:"call_credentials_plugin,omitempty"`
 	StatPrefix             string                  `json:"stat_prefix,omitempty"`
@@ -1662,8 +1642,8 @@ func (in *GrpcService_GoogleGrpc) DeepCopyInto(out *GrpcService_GoogleGrpc) {
 	*out = *in
 	if in.ChannelCredentials != nil {
 		in, out := &in.ChannelCredentials, &out.ChannelCredentials
-		*out = new(runtime.RawExtension)
-		**out = **in
+		*out = new(GrpcService_GoogleGrpc_ChannelCredentials)
+		(*in).DeepCopyInto(*out)
 	}
 	if in.ChannelCredentialsPlugin != nil {
 		in, out := &in.ChannelCredentialsPlugin, &out.ChannelCredentialsPlugin
@@ -1671,16 +1651,16 @@ func (in *GrpcService_GoogleGrpc) DeepCopyInto(out *GrpcService_GoogleGrpc) {
 		for i := range *in {
 			if (*in)[i] != nil {
 				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
 	if in.CallCredentials != nil {
 		in, out := &in.CallCredentials, &out.CallCredentials
-		*out = make([]*GrpcService_GoogleGrpc_CallCredentials, len(*in))
+		*out = make([]*runtime.RawExtension, len(*in))
 		for i := range *in {
 			if (*in)[i] != nil {
-				(*out)[i] = new(GrpcService_GoogleGrpc_CallCredentials)
+				(*out)[i] = new(runtime.RawExtension)
 				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
@@ -1691,14 +1671,14 @@ func (in *GrpcService_GoogleGrpc) DeepCopyInto(out *GrpcService_GoogleGrpc) {
 		for i := range *in {
 			if (*in)[i] != nil {
 				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
 	if in.Config != nil {
 		in, out := &in.Config, &out.Config
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.PerStreamBufferLimitBytes != nil {
 		in, out := &in.PerStreamBufferLimitBytes, &out.PerStreamBufferLimitBytes
@@ -1708,30 +1688,7 @@ func (in *GrpcService_GoogleGrpc) DeepCopyInto(out *GrpcService_GoogleGrpc) {
 	if in.ChannelArgs != nil {
 		in, out := &in.ChannelArgs, &out.ChannelArgs
 		*out = new(runtime.RawExtension)
-		**out = **in
-	}
-}
-
-// GrpcService_GoogleGrpc_CallCredentials represents the Envoy GrpcService_GoogleGrpc_CallCredentials configuration.
-type GrpcService_GoogleGrpc_CallCredentials struct {
-	// +kubebuilder:pruning:PreserveUnknownFields
-	FromPlugin *runtime.RawExtension `json:"from_plugin,omitempty"`
-	// +kubebuilder:pruning:PreserveUnknownFields
-	StsService *runtime.RawExtension `json:"sts_service,omitempty"`
-}
-
-// DeepCopyInto copies the receiver into out.
-func (in *GrpcService_GoogleGrpc_CallCredentials) DeepCopyInto(out *GrpcService_GoogleGrpc_CallCredentials) {
-	*out = *in
-	if in.FromPlugin != nil {
-		in, out := &in.FromPlugin, &out.FromPlugin
-		*out = new(runtime.RawExtension)
-		**out = **in
-	}
-	if in.StsService != nil {
-		in, out := &in.StsService, &out.StsService
-		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -1755,15 +1712,40 @@ func (in *GrpcService_GoogleGrpc_ChannelArgs) DeepCopyInto(out *GrpcService_Goog
 // GrpcService_GoogleGrpc_ChannelArgs_Value represents the Envoy GrpcService_GoogleGrpc_ChannelArgs_Value configuration.
 type GrpcService_GoogleGrpc_ChannelArgs_Value struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
-	GoogleIam *runtime.RawExtension `json:"google_iam,omitempty"`
+	SslCredentials     *runtime.RawExtension `json:"ssl_credentials,omitempty"`
+	AccessToken        string                `json:"access_token,omitempty"`
+	GoogleRefreshToken string                `json:"google_refresh_token,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ServiceAccountJwtAccess *runtime.RawExtension `json:"service_account_jwt_access,omitempty"`
+	StringValue             string                `json:"string_value,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
 func (in *GrpcService_GoogleGrpc_ChannelArgs_Value) DeepCopyInto(out *GrpcService_GoogleGrpc_ChannelArgs_Value) {
 	*out = *in
-	if in.GoogleIam != nil {
-		in, out := &in.GoogleIam, &out.GoogleIam
+	if in.SslCredentials != nil {
+		in, out := &in.SslCredentials, &out.SslCredentials
 		*out = new(runtime.RawExtension)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.ServiceAccountJwtAccess != nil {
+		in, out := &in.ServiceAccountJwtAccess, &out.ServiceAccountJwtAccess
+		*out = new(runtime.RawExtension)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+// GrpcService_GoogleGrpc_ChannelCredentials represents the Envoy GrpcService_GoogleGrpc_ChannelCredentials configuration.
+type GrpcService_GoogleGrpc_ChannelCredentials struct {
+	GoogleComputeEngine *bool `json:"google_compute_engine,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *GrpcService_GoogleGrpc_ChannelCredentials) DeepCopyInto(out *GrpcService_GoogleGrpc_ChannelCredentials) {
+	*out = *in
+	if in.GoogleComputeEngine != nil {
+		in, out := &in.GoogleComputeEngine, &out.GoogleComputeEngine
+		*out = new(bool)
 		**out = **in
 	}
 }
@@ -1959,7 +1941,7 @@ func (in *Http1ProtocolOptions_HeaderKeyFormat) DeepCopyInto(out *Http1ProtocolO
 	if in.ProperCaseWords != nil {
 		in, out := &in.ProperCaseWords, &out.ProperCaseWords
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.StatefulFormatter != nil {
 		in, out := &in.StatefulFormatter, &out.StatefulFormatter
@@ -2180,7 +2162,6 @@ type HttpConnectionManager_ProxyStatusConfig struct {
 	RemoveConnectionTerminationDetails bool   `json:"remove_connection_termination_details,omitempty"`
 	RemoveResponseFlags                bool   `json:"remove_response_flags,omitempty"`
 	SetRecommendedResponseCode         bool   `json:"set_recommended_response_code,omitempty"`
-	UseNodeId                          bool   `json:"use_node_id,omitempty"`
 	LiteralProxyName                   string `json:"literal_proxy_name,omitempty"`
 }
 
@@ -2308,7 +2289,7 @@ func (in *HttpFilter) DeepCopyInto(out *HttpFilter) {
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.ConfigDiscovery != nil {
 		in, out := &in.ConfigDiscovery, &out.ConfigDiscovery
@@ -2564,7 +2545,7 @@ func (in *MetadataMatcher) DeepCopyInto(out *MetadataMatcher) {
 		for i := range *in {
 			if (*in)[i] != nil {
 				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
@@ -2577,8 +2558,7 @@ func (in *MetadataMatcher) DeepCopyInto(out *MetadataMatcher) {
 
 // OrFilter represents the Envoy OrFilter configuration.
 type OrFilter struct {
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Filters []*runtime.RawExtension `json:"filters,omitempty"`
+	Filters []*AccessLogFilter `json:"filters,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
@@ -2586,11 +2566,11 @@ func (in *OrFilter) DeepCopyInto(out *OrFilter) {
 	*out = *in
 	if in.Filters != nil {
 		in, out := &in.Filters, &out.Filters
-		*out = make([]*runtime.RawExtension, len(*in))
+		*out = make([]*AccessLogFilter, len(*in))
 		for i := range *in {
 			if (*in)[i] != nil {
-				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*out)[i] = new(AccessLogFilter)
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
@@ -2627,7 +2607,7 @@ func (in *PathTransformation) DeepCopyInto(out *PathTransformation) {
 		for i := range *in {
 			if (*in)[i] != nil {
 				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
@@ -2882,47 +2862,47 @@ func (in *RateLimit_Action) DeepCopyInto(out *RateLimit_Action) {
 	if in.SourceCluster != nil {
 		in, out := &in.SourceCluster, &out.SourceCluster
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.DestinationCluster != nil {
 		in, out := &in.DestinationCluster, &out.DestinationCluster
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.RequestHeaders != nil {
 		in, out := &in.RequestHeaders, &out.RequestHeaders
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.QueryParameters != nil {
 		in, out := &in.QueryParameters, &out.QueryParameters
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.RemoteAddress != nil {
 		in, out := &in.RemoteAddress, &out.RemoteAddress
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.GenericKey != nil {
 		in, out := &in.GenericKey, &out.GenericKey
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.HeaderValueMatch != nil {
 		in, out := &in.HeaderValueMatch, &out.HeaderValueMatch
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.DynamicMetadata != nil {
 		in, out := &in.DynamicMetadata, &out.DynamicMetadata
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Metadata != nil {
 		in, out := &in.Metadata, &out.Metadata
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Extension != nil {
 		in, out := &in.Extension, &out.Extension
@@ -2932,12 +2912,12 @@ func (in *RateLimit_Action) DeepCopyInto(out *RateLimit_Action) {
 	if in.MaskedRemoteAddress != nil {
 		in, out := &in.MaskedRemoteAddress, &out.MaskedRemoteAddress
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.QueryParameterValueMatch != nil {
 		in, out := &in.QueryParameterValueMatch, &out.QueryParameterValueMatch
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -2969,7 +2949,7 @@ func (in *RateLimit_Override) DeepCopyInto(out *RateLimit_Override) {
 	if in.DynamicMetadata != nil {
 		in, out := &in.DynamicMetadata, &out.DynamicMetadata
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -3050,7 +3030,7 @@ func (in *RequestIDExtension) DeepCopyInto(out *RequestIDExtension) {
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -3115,25 +3095,38 @@ func (in *ResponseMapper) DeepCopyInto(out *ResponseMapper) {
 
 // RetryPolicy represents the Envoy RetryPolicy configuration.
 type RetryPolicy struct {
-	RetryBackOff                  *BackoffStrategy                  `json:"retry_back_off,omitempty"`
-	NumRetries                    *uint32                           `json:"num_retries,omitempty"`
 	RetryOn                       string                            `json:"retry_on,omitempty"`
+	NumRetries                    *uint32                           `json:"num_retries,omitempty"`
+	PerTryTimeout                 *string                           `json:"per_try_timeout,omitempty"`
+	PerTryIdleTimeout             *string                           `json:"per_try_idle_timeout,omitempty"`
 	RetryPriority                 *RetryPolicy_RetryPriority        `json:"retry_priority,omitempty"`
 	RetryHostPredicate            []*RetryPolicy_RetryHostPredicate `json:"retry_host_predicate,omitempty"`
+	RetryOptionsPredicates        []*TypedExtensionConfig           `json:"retry_options_predicates,omitempty"`
 	HostSelectionRetryMaxAttempts int64                             `json:"host_selection_retry_max_attempts,omitempty"`
+	RetriableStatusCodes          []uint32                          `json:"retriable_status_codes,omitempty"`
+	RetryBackOff                  *RetryPolicy_RetryBackOff         `json:"retry_back_off,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	RateLimitedRetryBackOff *runtime.RawExtension `json:"rate_limited_retry_back_off,omitempty"`
+	RetriableHeaders        []*HeaderMatcher      `json:"retriable_headers,omitempty"`
+	RetriableRequestHeaders []*HeaderMatcher      `json:"retriable_request_headers,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
 func (in *RetryPolicy) DeepCopyInto(out *RetryPolicy) {
 	*out = *in
-	if in.RetryBackOff != nil {
-		in, out := &in.RetryBackOff, &out.RetryBackOff
-		*out = new(BackoffStrategy)
-		(*in).DeepCopyInto(*out)
-	}
 	if in.NumRetries != nil {
 		in, out := &in.NumRetries, &out.NumRetries
 		*out = new(uint32)
+		**out = **in
+	}
+	if in.PerTryTimeout != nil {
+		in, out := &in.PerTryTimeout, &out.PerTryTimeout
+		*out = new(string)
+		**out = **in
+	}
+	if in.PerTryIdleTimeout != nil {
+		in, out := &in.PerTryIdleTimeout, &out.PerTryIdleTimeout
+		*out = new(string)
 		**out = **in
 	}
 	if in.RetryPriority != nil {
@@ -3151,6 +3144,109 @@ func (in *RetryPolicy) DeepCopyInto(out *RetryPolicy) {
 			}
 		}
 	}
+	if in.RetryOptionsPredicates != nil {
+		in, out := &in.RetryOptionsPredicates, &out.RetryOptionsPredicates
+		*out = make([]*TypedExtensionConfig, len(*in))
+		for i := range *in {
+			if (*in)[i] != nil {
+				(*out)[i] = new(TypedExtensionConfig)
+				(*in)[i].DeepCopyInto((*out)[i])
+			}
+		}
+	}
+	if in.RetriableStatusCodes != nil {
+		in, out := &in.RetriableStatusCodes, &out.RetriableStatusCodes
+		*out = make([]uint32, len(*in))
+		copy(*out, *in)
+	}
+	if in.RetryBackOff != nil {
+		in, out := &in.RetryBackOff, &out.RetryBackOff
+		*out = new(RetryPolicy_RetryBackOff)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.RateLimitedRetryBackOff != nil {
+		in, out := &in.RateLimitedRetryBackOff, &out.RateLimitedRetryBackOff
+		*out = new(runtime.RawExtension)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.RetriableHeaders != nil {
+		in, out := &in.RetriableHeaders, &out.RetriableHeaders
+		*out = make([]*HeaderMatcher, len(*in))
+		for i := range *in {
+			if (*in)[i] != nil {
+				(*out)[i] = new(HeaderMatcher)
+				(*in)[i].DeepCopyInto((*out)[i])
+			}
+		}
+	}
+	if in.RetriableRequestHeaders != nil {
+		in, out := &in.RetriableRequestHeaders, &out.RetriableRequestHeaders
+		*out = make([]*HeaderMatcher, len(*in))
+		for i := range *in {
+			if (*in)[i] != nil {
+				(*out)[i] = new(HeaderMatcher)
+				(*in)[i].DeepCopyInto((*out)[i])
+			}
+		}
+	}
+}
+
+// RetryPolicy_RateLimitedRetryBackOff represents the Envoy RetryPolicy_RateLimitedRetryBackOff configuration.
+type RetryPolicy_RateLimitedRetryBackOff struct {
+	ResetHeaders []*RetryPolicy_ResetHeader `json:"reset_headers,omitempty"`
+	MaxInterval  *string                    `json:"max_interval,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *RetryPolicy_RateLimitedRetryBackOff) DeepCopyInto(out *RetryPolicy_RateLimitedRetryBackOff) {
+	*out = *in
+	if in.ResetHeaders != nil {
+		in, out := &in.ResetHeaders, &out.ResetHeaders
+		*out = make([]*RetryPolicy_ResetHeader, len(*in))
+		for i := range *in {
+			if (*in)[i] != nil {
+				(*out)[i] = new(RetryPolicy_ResetHeader)
+				(*in)[i].DeepCopyInto((*out)[i])
+			}
+		}
+	}
+	if in.MaxInterval != nil {
+		in, out := &in.MaxInterval, &out.MaxInterval
+		*out = new(string)
+		**out = **in
+	}
+}
+
+// RetryPolicy_ResetHeader represents the Envoy RetryPolicy_ResetHeader configuration.
+type RetryPolicy_ResetHeader struct {
+	Name   string                        `json:"name,omitempty"`
+	Format RetryPolicy_ResetHeaderFormat `json:"format,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *RetryPolicy_ResetHeader) DeepCopyInto(out *RetryPolicy_ResetHeader) {
+	*out = *in
+}
+
+// RetryPolicy_RetryBackOff represents the Envoy RetryPolicy_RetryBackOff configuration.
+type RetryPolicy_RetryBackOff struct {
+	BaseInterval *string `json:"base_interval,omitempty"`
+	MaxInterval  *string `json:"max_interval,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *RetryPolicy_RetryBackOff) DeepCopyInto(out *RetryPolicy_RetryBackOff) {
+	*out = *in
+	if in.BaseInterval != nil {
+		in, out := &in.BaseInterval, &out.BaseInterval
+		*out = new(string)
+		**out = **in
+	}
+	if in.MaxInterval != nil {
+		in, out := &in.MaxInterval, &out.MaxInterval
+		*out = new(string)
+		**out = **in
+	}
 }
 
 // RetryPolicy_RetryHostPredicate represents the Envoy RetryPolicy_RetryHostPredicate configuration.
@@ -3166,7 +3262,7 @@ func (in *RetryPolicy_RetryHostPredicate) DeepCopyInto(out *RetryPolicy_RetryHos
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -3183,7 +3279,7 @@ func (in *RetryPolicy_RetryPriority) DeepCopyInto(out *RetryPolicy_RetryPriority
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -3219,12 +3315,12 @@ func (in *Route) DeepCopyInto(out *Route) {
 	if in.Match != nil {
 		in, out := &in.Match, &out.Match
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Route != nil {
 		in, out := &in.Route, &out.Route
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Redirect != nil {
 		in, out := &in.Redirect, &out.Redirect
@@ -3244,7 +3340,7 @@ func (in *Route) DeepCopyInto(out *Route) {
 	if in.NonForwardingAction != nil {
 		in, out := &in.NonForwardingAction, &out.NonForwardingAction
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Metadata != nil {
 		in, out := &in.Metadata, &out.Metadata
@@ -3417,7 +3513,7 @@ func (in *RouteAction) DeepCopyInto(out *RouteAction) {
 	if in.RetryPolicyTypedConfig != nil {
 		in, out := &in.RetryPolicyTypedConfig, &out.RetryPolicyTypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.RequestMirrorPolicies != nil {
 		in, out := &in.RequestMirrorPolicies, &out.RequestMirrorPolicies
@@ -3475,7 +3571,7 @@ func (in *RouteAction) DeepCopyInto(out *RouteAction) {
 		for i := range *in {
 			if (*in)[i] != nil {
 				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
@@ -3522,27 +3618,27 @@ func (in *RouteAction_HashPolicy) DeepCopyInto(out *RouteAction_HashPolicy) {
 	if in.Header != nil {
 		in, out := &in.Header, &out.Header
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.Cookie != nil {
 		in, out := &in.Cookie, &out.Cookie
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.ConnectionProperties != nil {
 		in, out := &in.ConnectionProperties, &out.ConnectionProperties
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.QueryParameter != nil {
 		in, out := &in.QueryParameter, &out.QueryParameter
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.FilterState != nil {
 		in, out := &in.FilterState, &out.FilterState
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -3604,7 +3700,7 @@ func (in *RouteAction_RequestMirrorPolicy) DeepCopyInto(out *RouteAction_Request
 		for i := range *in {
 			if (*in)[i] != nil {
 				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
@@ -3798,7 +3894,7 @@ func (in *RouteMatch) DeepCopyInto(out *RouteMatch) {
 	if in.ConnectMatcher != nil {
 		in, out := &in.ConnectMatcher, &out.ConnectMatcher
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.PathMatchPolicy != nil {
 		in, out := &in.PathMatchPolicy, &out.PathMatchPolicy
@@ -3838,7 +3934,7 @@ func (in *RouteMatch) DeepCopyInto(out *RouteMatch) {
 	if in.Grpc != nil {
 		in, out := &in.Grpc, &out.Grpc
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.TlsContext != nil {
 		in, out := &in.TlsContext, &out.TlsContext
@@ -3998,7 +4094,7 @@ func (in *ScopedRouteConfiguration_Key) DeepCopyInto(out *ScopedRouteConfigurati
 		for i := range *in {
 			if (*in)[i] != nil {
 				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
@@ -4032,10 +4128,7 @@ type ScopedRoutes struct {
 	RdsConfigSource               *ConfigSource                  `json:"rds_config_source,omitempty"`
 	ScopedRouteConfigurationsList *ScopedRouteConfigurationsList `json:"scoped_route_configurations_list,omitempty"`
 	ScopedRds                     *ScopedRds                     `json:"scoped_rds,omitempty"`
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Element *runtime.RawExtension `json:"element,omitempty"`
-	// +kubebuilder:pruning:PreserveUnknownFields
-	HeaderValueExtractor *runtime.RawExtension `json:"header_value_extractor,omitempty"`
+	Index                         uint32                         `json:"index,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
@@ -4044,7 +4137,7 @@ func (in *ScopedRoutes) DeepCopyInto(out *ScopedRoutes) {
 	if in.ScopeKeyBuilder != nil {
 		in, out := &in.ScopeKeyBuilder, &out.ScopeKeyBuilder
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.RdsConfigSource != nil {
 		in, out := &in.RdsConfigSource, &out.RdsConfigSource
@@ -4060,16 +4153,6 @@ func (in *ScopedRoutes) DeepCopyInto(out *ScopedRoutes) {
 		in, out := &in.ScopedRds, &out.ScopedRds
 		*out = new(ScopedRds)
 		(*in).DeepCopyInto(*out)
-	}
-	if in.Element != nil {
-		in, out := &in.Element, &out.Element
-		*out = new(runtime.RawExtension)
-		**out = **in
-	}
-	if in.HeaderValueExtractor != nil {
-		in, out := &in.HeaderValueExtractor, &out.HeaderValueExtractor
-		*out = new(runtime.RawExtension)
-		**out = **in
 	}
 }
 
@@ -4098,6 +4181,8 @@ type ScopedRoutes_ScopeKeyBuilder_FragmentBuilder struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	HeaderValueExtractor *runtime.RawExtension `json:"header_value_extractor,omitempty"`
 	Index                uint32                `json:"index,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Element *runtime.RawExtension `json:"element,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
@@ -4106,7 +4191,12 @@ func (in *ScopedRoutes_ScopeKeyBuilder_FragmentBuilder) DeepCopyInto(out *Scoped
 	if in.HeaderValueExtractor != nil {
 		in, out := &in.HeaderValueExtractor, &out.HeaderValueExtractor
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
+	}
+	if in.Element != nil {
+		in, out := &in.Element, &out.Element
+		*out = new(runtime.RawExtension)
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -4114,7 +4204,6 @@ func (in *ScopedRoutes_ScopeKeyBuilder_FragmentBuilder) DeepCopyInto(out *Scoped
 type ScopedRoutes_ScopeKeyBuilder_FragmentBuilder_HeaderValueExtractor struct {
 	Name             string `json:"name,omitempty"`
 	ElementSeparator string `json:"element_separator,omitempty"`
-	Index            uint32 `json:"index,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
@@ -4176,7 +4265,7 @@ func (in *StringMatcher) DeepCopyInto(out *StringMatcher) {
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -4281,7 +4370,7 @@ func (in *Tracing_Http) DeepCopyInto(out *Tracing_Http) {
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -4298,7 +4387,7 @@ func (in *TypedExtensionConfig) DeepCopyInto(out *TypedExtensionConfig) {
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -4314,7 +4403,7 @@ func (in *ValueMatcher) DeepCopyInto(out *ValueMatcher) {
 	if in.TypedConfig != nil {
 		in, out := &in.TypedConfig, &out.TypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 }
 
@@ -4470,7 +4559,7 @@ func (in *VirtualHost) DeepCopyInto(out *VirtualHost) {
 	if in.RetryPolicyTypedConfig != nil {
 		in, out := &in.RetryPolicyTypedConfig, &out.RetryPolicyTypedConfig
 		*out = new(runtime.RawExtension)
-		**out = **in
+		(*in).DeepCopyInto(*out)
 	}
 	if in.HedgePolicy != nil {
 		in, out := &in.HedgePolicy, &out.HedgePolicy
