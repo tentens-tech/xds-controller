@@ -1279,6 +1279,10 @@ func (g *Generator) writeDeepCopyField(buf *strings.Builder, f FieldDef) {
 		fmt.Fprintf(buf, "\t\tin, out := &in.%s, &out.%s\n", name, name)
 		fmt.Fprintf(buf, "\t\t*out = make(%s, len(*in))\n", ft)
 		buf.WriteString("\t\tfor key, val := range *in {\n")
+		// Note: This is a shallow copy of map values. For HCM types, map values
+		// are typically primitives (strings, ints) rather than pointers to structs,
+		// so shallow copy is sufficient. If pointer-to-struct values are needed
+		// in the future, this would need to handle deep copying of values.
 		buf.WriteString("\t\t\t(*out)[key] = val\n")
 		buf.WriteString("\t\t}\n")
 		buf.WriteString("\t}\n")
