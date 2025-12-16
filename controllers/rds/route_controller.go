@@ -304,7 +304,7 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	if updated {
-		log.V(0).Info("Updated route")
+		log.V(2).Info("Updated route")
 	} else {
 		log.V(2).Info("Added route")
 	}
@@ -865,7 +865,7 @@ func (r *RouteReconciler) updateRouteStatus(ctx context.Context, routeCR *envoyx
 			log.Error(err, "unable to update Route status")
 			return err
 		}
-		log.V(1).Info("Updated route status", "active", active, "virtualHosts", virtualHostCount, "nodes", strings.Join(nodesList, ","))
+		log.V(2).Info("Updated route status", "active", active, "virtualHosts", virtualHostCount, "nodes", strings.Join(nodesList, ","))
 	}
 
 	return nil

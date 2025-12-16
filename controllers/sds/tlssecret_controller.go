@@ -508,7 +508,7 @@ func (r *TLSSecretReconciler) updateTLSSecretStatus(ctx context.Context, tlsSecr
 			log.Error(err, "unable to update TLSSecret status")
 			return err
 		}
-		log.V(1).Info("Updated tlssecret status", "active", active, "nodes", strings.Join(nodesList, ","))
+		log.V(2).Info("Updated tlssecret status", "active", active, "nodes", strings.Join(nodesList, ","))
 	}
 
 	return nil

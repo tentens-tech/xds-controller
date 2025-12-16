@@ -47,6 +47,7 @@ Managing Envoy at scale presents several challenges:
   - Certificate expiry monitoring with Prometheus metrics
 
 - **Advanced Capabilities**
+  - Full HTTP Connection Manager (HCM) configuration support
   - QUIC/HTTP3 support
   - TCP proxy support
   - Leader election for HA deployments

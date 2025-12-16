@@ -59,6 +59,9 @@ import (
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/raw_buffer/v3"
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 
+	// Network
+	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/network/dns_resolver/cares/v3"
+
 	// Upstreams
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/tcp/v3"
@@ -556,7 +559,7 @@ func (r *ClusterReconciler) updateClusterStatus(ctx context.Context, clusterCR *
 			log.Error(err, "unable to update Cluster status")
 			return err
 		}
-		log.V(1).Info("Updated cluster status", "active", active, "endpointCount", endpointCount, "nodes", strings.Join(nodesList, ","))
+		log.V(2).Info("Updated cluster status", "active", active, "endpointCount", endpointCount, "nodes", strings.Join(nodesList, ","))
 	}
 
 	return nil

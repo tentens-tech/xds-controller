@@ -2,6 +2,7 @@
 # Advanced Example - Full-Featured HTTP Configuration
 # =============================================================================
 # This example demonstrates advanced HTTP features:
+#   - Full HTTP Connection Manager (HCM) configuration
 #   - CORS configuration
 #   - Brotli compression
 #   - Lua scripting
@@ -10,6 +11,7 @@
 #   - Retry policies
 #   - Path rewriting
 #   - Redirects
+#   - HTTP protocol options (HTTP/1, HTTP/2, HTTP/3)
 # =============================================================================
 
 ---
@@ -253,6 +255,80 @@ spec:
             response_handle:headers():add("x-response-timestamp", os.time())
           end
     # Router must be last
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+---
+# =============================================================================
+# Example: Route with Full HCM Configuration
+# =============================================================================
+# Demonstrates all available HTTP Connection Manager options
+# =============================================================================
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: hcm-full-config
+  namespace: xds-system
+spec:
+  listener_refs:
+    - http-advanced
+  # Basic HCM settings
+  stat_prefix: hcm-demo
+  codec_type: AUTO
+  generate_request_id: true
+  use_remote_address: true
+  xff_num_trusted_hops: 1
+  # Error handling
+  stream_error_on_invalid_http_message: true
+  # Timeouts
+  stream_idle_timeout: 300s
+  request_timeout: 60s
+  request_headers_timeout: 10s
+  drain_timeout: 30s
+  # HTTP protocol options
+  common_http_protocol_options:
+    idle_timeout: 900s
+    max_connection_duration: 3600s
+    max_stream_duration: 300s
+  http2_protocol_options:
+    max_concurrent_streams: 100
+    initial_stream_window_size: 65536
+    initial_connection_window_size: 1048576
+  # Path handling
+  normalize_path: true
+  merge_slashes: true
+  path_with_escaped_slashes_action: UNESCAPE_AND_REDIRECT
+  # Client cert forwarding
+  forward_client_cert_details: SANITIZE_SET
+  set_current_client_cert_details:
+    subject: true
+    cert: false
+    chain: false
+    dns: true
+    uri: true
+  # Request ID handling
+  preserve_external_request_id: false
+  always_set_request_id_in_response: true
+  # Proxy settings
+  proxy_100_continue: true
+  # Filter chain match for SNI-based routing
+  filter_chain_match:
+    server_names:
+      - "api.example.com"
+  # Route configuration
+  route_config:
+    name: hcm_demo_route
+    virtual_hosts:
+      - name: api
+        domains:
+          - "*"
+        routes:
+          - match:
+              prefix: /
+            route:
+              cluster: api-backend
+  http_filters:
     - name: envoy.filters.http.router
       typed_config:
         "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
