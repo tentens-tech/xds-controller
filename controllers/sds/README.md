@@ -9,7 +9,7 @@ The Secret Discovery Service (SDS) in the control-plane xDS service for Envoy pr
 SDS supports three storage backends for certificates:
 
 | Type | Description | Use Case |
-|------|-------------|----------|
+| ---- | ----------- | -------- |
 | `Kubernetes` | Store certificates as Kubernetes Secrets | Default for Let's Encrypt (no Vault) |
 | `Vault` | Store certificates in HashiCorp Vault | Production with centralized secret management |
 | `Local` | Store certificates on local filesystem | Self-signed certs for development |
@@ -196,14 +196,14 @@ spec:
 #### Let's Encrypt (Required for ACME)
 
 | Variable | Description | Required |
-|----------|-------------|----------|
+| -------- | ----------- | -------- |
 | `XDS_LETS_ENCRYPT_EMAIL` | Email for Let's Encrypt notifications | Yes |
 | `XDS_LETS_ENCRYPT_PRIVATEKEYB64` | Base64-encoded RSA private key for ACME account | No (auto-generated) |
 
 #### Vault Storage (Optional)
 
 | Variable | Description | Required |
-|----------|-------------|----------|
+| -------- | ----------- | -------- |
 | `XDS_VAULT_URL` | Vault server URL (e.g., `http://vault:8200`) | If using Vault |
 | `XDS_VAULT_TOKEN` | Vault authentication token | If using Vault |
 | `XDS_VAULT_PATH` | KV2 secret path (e.g., `secret/envoy`) | If using Vault |
@@ -215,7 +215,7 @@ SDS uses [lego](https://github.com/go-acme/lego) for ACME certificate management
 **Common DNS Providers:**
 
 | Provider | Environment Variables |
-|----------|----------------------|
+| -------- | --------------------- |
 | Cloudflare | `CLOUDFLARE_DNS_API_TOKEN` or `CLOUDFLARE_API_KEY` + `CLOUDFLARE_EMAIL` |
 | Google Cloud DNS | `GCE_PROJECT` + `GCE_SERVICE_ACCOUNT_FILE` or `GCE_SERVICE_ACCOUNT` |
 | AWS Route53 | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_REGION` |
