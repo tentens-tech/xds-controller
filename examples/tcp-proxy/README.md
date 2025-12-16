@@ -5,7 +5,7 @@ This example demonstrates how to use Envoy as a TCP proxy for non-HTTP services 
 ## What's Included
 
 | Resource | Name | Port | Description |
-|----------|------|------|-------------|
+| -------- | ---- | ---- | ----------- |
 | Listener | `postgres-proxy` | 5432 | PostgreSQL TCP proxy |
 | Listener | `redis-proxy` | 6379 | Redis TCP proxy |
 | Listener | `mysql-proxy` | 3306 | MySQL TCP proxy |
@@ -84,7 +84,7 @@ TCP proxy operates at Layer 4 (Transport Layer):
 ### Key Differences from HTTP Proxy
 
 | Feature | HTTP Proxy | TCP Proxy |
-|---------|------------|-----------|
+| ------- | ---------- | --------- |
 | Layer | L7 (Application) | L4 (Transport) |
 | Protocol | HTTP/HTTPS/gRPC | Any TCP |
 | Routing | Path, headers, host | Port only |

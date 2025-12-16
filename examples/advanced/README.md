@@ -5,7 +5,7 @@ This example demonstrates advanced HTTP proxy features including CORS, compressi
 ## What's Included
 
 | Resource | Name | Description |
-|----------|------|-------------|
+| -------- | ---- | ----------- |
 | Listener | `http-advanced` | HTTP listener on port 8080 |
 | Cluster | `api-backend` | Backend with health checks and circuit breakers |
 | Route | `advanced-route` | Full-featured route configuration |
@@ -289,7 +289,7 @@ kubectl logs deployment/envoy -n xds-system | jq 'select(.response_code >= 400)'
 ## Available Envoy Variables for Access Logs
 
 | Variable | Description |
-|----------|-------------|
+| -------- | ----------- |
 | `%START_TIME%` | Request start time |
 | `%DURATION%` | Total request duration |
 | `%REQUEST_DURATION%` | Time until first upstream byte |

@@ -5,7 +5,7 @@ This is the simplest example of using xDS Controller to configure Envoy as an HT
 ## What's Included
 
 | Resource | Name | Description |
-|----------|------|-------------|
+| -------- | ---- | ----------- |
 | Listener | `http` | Accepts HTTP traffic on port 8080 |
 | Cluster | `backend` | Defines the nginx backend service |
 | Route | `default-route` | Routes all traffic to the backend |

@@ -7,7 +7,7 @@ This example demonstrates how to send **different xDS configurations to differen
 ## Files
 
 | File | Description |
-|------|-------------|
+| ---- | ----------- |
 | `resources.yaml` | xDS resources (Listeners, Routes, Clusters) with environment targeting |
 | `backend.yaml` | Backends + Envoy proxies for production and staging |
 
@@ -146,7 +146,7 @@ Resources without annotations go to Envoys with `node.cluster=global, node.id=gl
 ### Production (clusters: "production")
 
 | Resource | Name | Description |
-|----------|------|-------------|
+| -------- | ---- | ----------- |
 | Listener | `http-production` | HTTP listener on port 8080 |
 | Listener | `https-production` | HTTPS listener with TLS inspector |
 | Cluster | `backend-production` | High availability settings |
@@ -155,7 +155,7 @@ Resources without annotations go to Envoys with `node.cluster=global, node.id=gl
 ### Staging (clusters: "staging")
 
 | Resource | Name | Description |
-|----------|------|-------------|
+| -------- | ---- | ----------- |
 | Listener | `http-staging` | HTTP listener on port 8080 |
 | Cluster | `backend-staging` | Relaxed settings for testing |
 | Route | `route-staging` | Longer timeouts, no retries |
@@ -163,7 +163,7 @@ Resources without annotations go to Envoys with `node.cluster=global, node.id=gl
 ## Configuration Differences
 
 | Setting | Production | Staging |
-|---------|------------|---------|
+| ------- | ---------- | ------- |
 | Connect timeout | 0.25s | 5s |
 | Load balancing | LEAST_REQUEST | ROUND_ROBIN |
 | Health check interval | 3s | 10s |

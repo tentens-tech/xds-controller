@@ -22,7 +22,7 @@ The Envoy xDS Controller is an xDS control plane that translates Kubernetes Cust
 Managing Envoy at scale presents several challenges:
 
 | Challenge | How xDS Controller Solves It |
-|-----------|------------------------------|
+| --------- | ---------------------------- |
 | **Manual configuration** | Define resources in Kubernetes CRDs, not complex Envoy YAML |
 | **Certificate management** | Automatic Let's Encrypt integration with DNS-01/HTTP-01 challenges |
 | **Configuration sprawl** | Single source of truth in Kubernetes |
@@ -190,7 +190,7 @@ You should see the nginx welcome page served through Envoy! 🎉
 ## Documentation
 
 | Component | Description |
-|-----------|-------------|
+| --------- | ----------- |
 | [LDS (Listener Discovery Service)](controllers/lds/README.md) | Configure how Envoy listens for incoming connections |
 | [RDS (Route Discovery Service)](controllers/rds/README.md) | Configure routing rules and virtual hosts |
 | [CDS (Cluster Discovery Service)](controllers/cds/README.md) | Configure upstream clusters and load balancing |
@@ -204,21 +204,21 @@ You should see the nginx welcome page served through Envoy! 🎉
 #### Core Settings
 
 | Parameter | Description | Required |
-|-----------|-------------|----------|
+| --------- | ----------- | -------- |
 | `XDS_NAMESPACE` | Kubernetes namespace to watch | No (all namespaces) |
 | `XDS_LOG_LEVEL` | Log level (debug, info, warn, error) | No (info) |
 
 #### Let's Encrypt (ACME)
 
 | Parameter | Description | Required |
-|-----------|-------------|----------|
+| --------- | ----------- | -------- |
 | `XDS_LETS_ENCRYPT_EMAIL` | Email for Let's Encrypt notifications | Yes (for TLS) |
 | `XDS_LETS_ENCRYPT_PRIVATEKEYB64` | Base64 RSA key for Let's Encrypt account | No (auto-generated) |
 
 #### Vault Storage (Optional)
 
 | Parameter | Description | Required |
-|-----------|-------------|----------|
+| --------- | ----------- | -------- |
 | `XDS_VAULT_URL` | HashiCorp Vault URL | No |
 | `XDS_VAULT_TOKEN` | Vault authentication token | No |
 | `XDS_VAULT_PATH` | Vault KV2 secret path (e.g., "secret/envoy") | No |
@@ -228,7 +228,7 @@ You should see the nginx welcome page served through Envoy! 🎉
 SDS uses [lego](https://github.com/go-acme/lego) for ACME certificate management. Set the appropriate environment variables for your DNS provider:
 
 | Provider | Environment Variables |
-|----------|----------------------|
+| -------- | --------------------- |
 | Cloudflare | `CLOUDFLARE_DNS_API_TOKEN` |
 | Google Cloud DNS | `GCE_PROJECT`, `GCE_SERVICE_ACCOUNT_FILE` |
 | AWS Route53 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` |
@@ -297,7 +297,7 @@ spec:
 ```
 
 | Annotation | Description | Example |
-|------------|-------------|---------|
+| ---------- | ----------- | ------- |
 | `clusters` | Comma-separated list of Envoy clusters to target | `"production,staging"` |
 | `nodes` | Comma-separated list of Envoy node IDs to target | `"01,02,03"` |
 
@@ -361,7 +361,7 @@ spec:
 ## Prometheus Metrics
 
 | Metric | Description |
-|--------|-------------|
+| ------ | ----------- |
 | `xds_cert_expiry_countdown` | Minutes until certificate expiry |
 | `xds_snapshot_version_match` | Config sync status (1=synced, 0=mismatch) |
 | `xds_snapshot_update_total` | Total configuration updates |
@@ -375,7 +375,7 @@ spec:
 For comprehensive examples with production-ready configurations, see the individual controller documentation:
 
 | Resource | Documentation | Description |
-|----------|---------------|-------------|
+| -------- | ------------- | ----------- |
 | **Listener** | [LDS Examples](controllers/lds/README.md) | HTTP, HTTPS, QUIC/HTTP3, TCP proxy |
 | **Route** | [RDS Examples](controllers/rds/README.md) | Routing, CORS, Lua, gRPC, compression |
 | **Cluster** | [CDS Examples](controllers/cds/README.md) | Load balancing, health checks, circuit breakers |

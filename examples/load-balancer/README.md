@@ -5,7 +5,7 @@ This example demonstrates advanced load balancing features including multi-zone 
 ## What's Included
 
 | Resource | Name | Description |
-|----------|------|-------------|
+| -------- | ---- | ----------- |
 | Endpoint | `backend-zone-a` | Primary endpoints in zone A (priority 0) |
 | Endpoint | `backend-zone-b` | Primary endpoints in zone B (priority 0) |
 | Endpoint | `backend-zone-c` | Failover endpoints in zone C (priority 1) |
@@ -222,7 +222,7 @@ curl http://localhost:9901/clusters | grep -E "cx_active|rq_total"
 Change the `lb_policy` in the cluster spec:
 
 | Policy | Description |
-|--------|-------------|
+| ------ | ----------- |
 | `ROUND_ROBIN` | Rotates through endpoints (default) |
 | `LEAST_REQUEST` | Sends to endpoint with fewest active requests |
 | `RANDOM` | Random selection |

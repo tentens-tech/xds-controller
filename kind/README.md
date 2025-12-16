@@ -5,7 +5,7 @@ This example sets up a local Kubernetes cluster using KIND with the complete xDS
 ## What's Included
 
 | Component | Description |
-|-----------|-------------|
+| --------- | ----------- |
 | **KIND Cluster** | Local Kubernetes with port mappings |
 | **xDS Controller** | Dynamic Envoy configuration via CRDs |
 | **Envoy** | Proxy receiving config from xDS Controller |
@@ -86,7 +86,7 @@ curl http://localhost:8080
 ## Ports
 
 | Host Port | Service | Description |
-|-----------|---------|-------------|
+| --------- | ------- | ----------- |
 | 8080 | Envoy HTTP | Main proxy endpoint |
 | 9901 | Envoy Admin | Stats, config dump, health |
 

@@ -5,7 +5,7 @@ This example demonstrates how to configure Envoy with TLS termination using xDS 
 ## What's Included
 
 | Resource | Name | Description |
-|----------|------|-------------|
+| -------- | ---- | ----------- |
 | TLSSecret | `dev-cert` | Self-signed certificate for development |
 | Listener | `http` | HTTP on port 80 (redirect to HTTPS) |
 | Listener | `https` | HTTPS on port 443 with TLS inspector |
@@ -109,7 +109,7 @@ spec:
 **Required Environment Variables for Let's Encrypt:**
 
 | Provider | Variables |
-|----------|-----------|
+| -------- | --------- |
 | Cloudflare | `CLOUDFLARE_DNS_API_TOKEN` |
 | AWS Route53 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` |
 | Google Cloud DNS | `GCE_PROJECT`, `GCE_SERVICE_ACCOUNT_FILE` |

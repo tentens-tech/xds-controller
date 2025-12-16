@@ -5,7 +5,7 @@ This example demonstrates how to configure Envoy for gRPC services including nat
 ## What's Included
 
 | Resource | Name | Port | Description |
-|----------|------|------|-------------|
+| -------- | ---- | ---- | ----------- |
 | Listener | `grpc` | 50051 | Native gRPC listener |
 | Listener | `grpc-web` | 8080 | gRPC-Web listener for browsers |
 | Cluster | `grpc-backend` | - | gRPC backend with HTTP/2 and health checks |
@@ -239,7 +239,7 @@ curl http://localhost:9901/stats | grep grpc
 ## gRPC Retry Conditions
 
 | Condition | Description |
-|-----------|-------------|
+| --------- | ----------- |
 | `cancelled` | Request was cancelled |
 | `deadline-exceeded` | Request timed out |
 | `unavailable` | Service unavailable (equivalent to HTTP 503) |
