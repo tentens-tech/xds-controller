@@ -59,7 +59,7 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 ENVOY_TAG ?= v1.36.0
 
 .PHONY: generate-types
-generate-types: generate-cds generate-lds generate-rds generate-eds ## Generate all xDS types from go-control-plane
+generate-types: generate-cds generate-lds generate-rds generate-eds generate-hcm ## Generate all xDS types from go-control-plane
 	@echo "Type generation complete. Run 'make generate' to regenerate DeepCopy methods."
 
 .PHONY: generate-cds
@@ -85,6 +85,12 @@ generate-eds: ## Generate EDS (Endpoint) types from go-control-plane
 	@echo "Generating EDS types from envoy $(ENVOY_TAG)..."
 	go run ./tools/typegen/eds -output pkg/xds/types/eds -envoy-tag $(ENVOY_TAG) -v
 	gofmt -w pkg/xds/types/eds/
+
+.PHONY: generate-hcm
+generate-hcm: ## Generate HCM (HTTP Connection Manager) types from go-control-plane
+	@echo "Generating HCM types from envoy $(ENVOY_TAG)..."
+	go run ./tools/typegen/hcm -output pkg/xds/types/hcm -envoy-tag $(ENVOY_TAG) -v
+	gofmt -w pkg/xds/types/hcm/
 
 .PHONY: generateall
 generateall: generate-types generate manifests ## Run full generation: types -> deepcopy -> CRDs

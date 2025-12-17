@@ -42,7 +42,7 @@ kind delete cluster --name xds-example
 ## Examples Overview
 
 | Example | Description |
-|---------|-------------|
+| ------- | ----------- |
 | [basic](./basic/) | Minimal HTTP proxy setup |
 | [https-tls](./https-tls/) | HTTPS with TLS termination |
 | [tcp-proxy](./tcp-proxy/) | TCP proxy for databases |
@@ -308,7 +308,7 @@ kind delete cluster --name xds-example
 ## Annotations Reference
 
 | Annotation | Description | Example |
-|------------|-------------|---------|
+| ---------- | ----------- | ------- |
 | `clusters` | Target Envoy clusters | `"production,staging"` |
 | `nodes` | Target specific Envoy nodes | `"envoy-01,envoy-02"` |
 

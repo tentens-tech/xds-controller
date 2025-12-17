@@ -5,7 +5,7 @@ This example demonstrates advanced HTTP proxy features including CORS, compressi
 ## What's Included
 
 | Resource | Name | Description |
-|----------|------|-------------|
+| -------- | ---- | ----------- |
 | Listener | `http-advanced` | HTTP listener on port 8080 |
 | Cluster | `api-backend` | Backend with health checks and circuit breakers |
 | Route | `advanced-route` | Full-featured route configuration |
@@ -48,7 +48,32 @@ kind delete cluster --name xds-advanced
 
 ## Features Demonstrated
 
-### 1. CORS (Cross-Origin Resource Sharing)
+### 1. Full HTTP Connection Manager (HCM) Configuration
+
+The Route CRD supports all Envoy HCM options:
+
+```yaml
+spec:
+  stat_prefix: my-route
+  codec_type: AUTO
+  stream_error_on_invalid_http_message: true
+  normalize_path: true
+  merge_slashes: true
+  # Timeouts
+  stream_idle_timeout: 300s
+  request_timeout: 60s
+  request_headers_timeout: 10s
+  # HTTP/2 settings
+  http2_protocol_options:
+    max_concurrent_streams: 100
+    initial_stream_window_size: 65536
+  # Common HTTP options
+  common_http_protocol_options:
+    idle_timeout: 900s
+  # And many more...
+```
+
+### 2. CORS (Cross-Origin Resource Sharing)
 
 ```yaml
 cors:
@@ -61,7 +86,7 @@ cors:
   max_age: 24h
 ```
 
-### 2. Brotli Compression
+### 3. Brotli Compression
 
 ```yaml
 - name: envoy.filters.http.compressor
@@ -73,7 +98,7 @@ cors:
         quality: 4
 ```
 
-### 3. Lua Scripting
+### 4. Lua Scripting
 
 ```yaml
 - name: envoy.filters.http.lua
@@ -84,7 +109,7 @@ cors:
       end
 ```
 
-### 4. JSON Access Logging
+### 5. JSON Access Logging
 
 ```yaml
 access_log:
@@ -98,7 +123,7 @@ access_log:
           ...
 ```
 
-### 5. Path Rewriting
+### 6. Path Rewriting
 
 ```yaml
 routes:
@@ -108,7 +133,7 @@ routes:
       prefix_rewrite: /  # /api/v1/users -> /users
 ```
 
-### 6. Redirects
+### 7. Redirects
 
 ```yaml
 routes:
@@ -119,7 +144,7 @@ routes:
       response_code: MOVED_PERMANENTLY
 ```
 
-### 7. Retry Policies
+### 8. Retry Policies
 
 ```yaml
 retry_policy:
@@ -128,7 +153,7 @@ retry_policy:
   per_try_timeout: 5s
 ```
 
-### 8. Custom Headers
+### 9. Custom Headers
 
 ```yaml
 response_headers_to_add:
@@ -264,7 +289,7 @@ kubectl logs deployment/envoy -n xds-system | jq 'select(.response_code >= 400)'
 ## Available Envoy Variables for Access Logs
 
 | Variable | Description |
-|----------|-------------|
+| -------- | ----------- |
 | `%START_TIME%` | Request start time |
 | `%DURATION%` | Total request duration |
 | `%REQUEST_DURATION%` | Time until first upstream byte |

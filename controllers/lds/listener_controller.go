@@ -111,7 +111,8 @@ import (
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 	"github.com/tentens-tech/xds-controller/controllers/util"
 	"github.com/tentens-tech/xds-controller/pkg/xds"
-	routetypes "github.com/tentens-tech/xds-controller/pkg/xds/types/route"
+	hcmtypes "github.com/tentens-tech/xds-controller/pkg/xds/types/hcm"
+	_ "github.com/tentens-tech/xds-controller/pkg/xds/types/route" // imported for RouteSpec embedding
 )
 
 // ListenerReconciler reconciles a Listener object
@@ -724,16 +725,17 @@ func hasFilterChainDuplicates(domains, searchDomains []string) bool {
 
 func prepareFilters(route envoyxdsv1alpha1.Route, lds *listenerv3.Listener) ([]*listenerv3.Filter, error) {
 	filters := []*listenerv3.Filter{}
-	// Convert route_config to RDS
-	if route.Spec.RDS == nil {
-		route.Spec.RDS = &routetypes.RDSConfig{}
+	// Convert route_config to RDS using the generated HCM types
+	if route.Spec.Rds == nil {
+		route.Spec.Rds = &hcmtypes.Rds{}
 	}
-	route.Spec.RDS.RouteConfigName = route.Name
-	if route.Spec.RDS.ConfigSource == nil {
-		route.Spec.RDS.ConfigSource = &routetypes.ConfigSource{}
+	route.Spec.Rds.RouteConfigName = route.Name
+	if route.Spec.Rds.ConfigSource == nil {
+		route.Spec.Rds.ConfigSource = &hcmtypes.ConfigSource{}
 	}
-	route.Spec.RDS.ConfigSource.ADS = &routetypes.AggregatedConfigSource{}
-	route.Spec.RDS.ConfigSource.ResourceApiVersion = "V3"
+	// ADS config must have content (even empty object) to not be omitted by omitempty
+	route.Spec.Rds.ConfigSource.Ads = &runtime.RawExtension{Raw: []byte("{}")}
+	route.Spec.Rds.ConfigSource.ResourceApiVersion = "V3"
 
 	// Ignore filter chain match (it's used separately for the filter chain)
 	route.Spec.FilterChainMatch = nil

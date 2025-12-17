@@ -385,7 +385,7 @@ func (r *EndpointReconciler) updateEndpointStatus(ctx context.Context, endpointC
 			log.Error(err, "unable to update Endpoint status")
 			return err
 		}
-		log.V(1).Info("Updated endpoint status", "active", active, "endpointCount", endpointCount, "nodes", strings.Join(nodesList, ","))
+		log.V(2).Info("Updated endpoint status", "active", active, "endpointCount", endpointCount, "nodes", strings.Join(nodesList, ","))
 	}
 
 	return nil
