@@ -423,6 +423,7 @@ type GlobalConfig interface {
 	GetRndNumber() int
 	GetRenewBeforeExpireInMinutes() int
 	GetDryRun() bool
+	CheckVaultWriteAccess(d *xdstypes.DomainConfig) error
 	StorageConfigReaderWriter
 }
 
@@ -443,13 +444,36 @@ func (c *Config) GetDryRun() bool {
 }
 
 type StorageConfigReaderWriter interface {
-	StorageConfigRead(d *xdstypes.DomainConfig) (xdstypes.Cert, error)
+	StorageConfigRead(ctx context.Context, d *xdstypes.DomainConfig) (xdstypes.Cert, error)
 	StorageConfigWrite(d *xdstypes.DomainConfig, c xdstypes.Cert) error
+	CheckVaultWriteAccess(d *xdstypes.DomainConfig) error
 }
 
-func (c *Config) StorageConfigRead(d *xdstypes.DomainConfig) (xdstypes.Cert, error) {
+// CheckVaultWriteAccess verifies Vault is configured and accessible.
+// Note: We trust that if StorageConfigRead succeeded (returned cert or ErrCertNotFound),
+// write access is also available, as most Vault policies grant read+write together.
+// We don't use sys/capabilities-self as it requires additional permissions.
+func (c *Config) CheckVaultWriteAccess(d *xdstypes.DomainConfig) error {
+	if d.Config.VaultStorageConfig == nil {
+		return xdserr.ErrVaultNotConfigured
+	}
+
+	if c.VaultClient == nil {
+		return xdserr.ErrVaultNotConfigured
+	}
+
+	log.Log.V(2).Info("Vault configuration verified", "path", d.Config.VaultStorageConfig.Path, "secretName", d.SecretName)
+	return nil
+}
+
+func (c *Config) StorageConfigRead(ctx context.Context, d *xdstypes.DomainConfig) (xdstypes.Cert, error) {
 	var cert xdstypes.Cert
 	var readErr error
+
+	// Check for cancellation at the start
+	if ctx.Err() != nil {
+		return cert, ctx.Err()
+	}
 
 	switch d.Config.Type {
 	case xdstypes.Local:
@@ -493,9 +517,14 @@ func (c *Config) StorageConfigRead(d *xdstypes.DomainConfig) (xdstypes.Cert, err
 			return cert, fmt.Errorf("domain config is nil")
 		}
 
-		// throttle the read 200 ms
-		time.Sleep(time.Duration(200) * time.Millisecond)
-		secret, vaultErr := c.VaultClient.KVv2(d.Config.VaultStorageConfig.Path).Get(context.Background(), d.SecretName)
+		// throttle the read 100 ms with context-aware sleep
+		select {
+		case <-ctx.Done():
+			return cert, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		secret, vaultErr := c.VaultClient.KVv2(d.Config.VaultStorageConfig.Path).Get(ctx, d.SecretName)
 		if vaultErr != nil {
 			if strings.Contains(vaultErr.Error(), "secret not found") {
 				return cert, xdserr.ErrCertNotFound
@@ -529,6 +558,11 @@ func (c *Config) StorageConfigRead(d *xdstypes.DomainConfig) (xdstypes.Cert, err
 			return cert, fmt.Errorf("unable to decode private key: %w", decodeErr)
 		}
 		cert.Priv = priv
+
+		// Validate decoded data is not empty (handles case where Vault stores empty strings)
+		if len(cert.Pub) == 0 || len(cert.Priv) == 0 {
+			return cert, xdserr.ErrCertNil
+		}
 
 		return cert, nil
 
@@ -609,10 +643,17 @@ func (c *Config) StorageConfigWrite(d *xdstypes.DomainConfig, cert xdstypes.Cert
 			return xdserr.ErrVaultNotConfigured
 		}
 
+		// Validate cert data before writing
+		if len(cert.Pub) == 0 || len(cert.Priv) == 0 {
+			log.Log.V(0).Info("Skipping Vault write - empty cert data", "secretName", d.SecretName, "pubLen", len(cert.Pub), "privLen", len(cert.Priv))
+			return nil // Don't write empty certs
+		}
+
 		certificateData := map[string]interface{}{
 			"Pub":  cert.Pub,
 			"Priv": cert.Priv,
 		}
+		log.Log.V(2).Info("Writing cert to Vault", "secretName", d.SecretName, "path", d.Config.VaultStorageConfig.Path, "pubLen", len(cert.Pub), "privLen", len(cert.Priv))
 		_, putErr := c.VaultClient.KVv2(d.Config.VaultStorageConfig.Path).Put(context.Background(), d.SecretName, certificateData)
 		if putErr != nil {
 			// Check if the error is due to the mount not existing (404)
@@ -637,6 +678,7 @@ func (c *Config) StorageConfigWrite(d *xdstypes.DomainConfig, cert xdstypes.Cert
 				return fmt.Errorf("unable to write secret: %w", putErr)
 			}
 		}
+		log.Log.V(0).Info("Successfully wrote cert to Vault", "secretName", d.SecretName, "path", d.Config.VaultStorageConfig.Path)
 
 	case xdstypes.Kubernetes:
 		if c.K8sClient == nil {

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -57,11 +56,11 @@ import (
 // EndpointReconciler reconciles a Endpoint object
 type EndpointReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Config            *xds.Config
-	mutex             sync.Mutex
-	reconciling       atomic.Int32
-	lastReconcileTime atomic.Int64
+	Scheme                 *runtime.Scheme
+	Config                 *xds.Config
+	reconciling            atomic.Int32
+	lastReconcileTime      atomic.Int64
+	initialReconcileLogged atomic.Bool
 }
 
 //+kubebuilder:rbac:groups=envoyxds.io,resources=endpoints,verbs=get;list;watch;create;update;patch;delete
@@ -76,8 +75,8 @@ type EndpointReconciler struct {
 func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
+	r.Config.LockConfig()
+	defer r.Config.UnlockConfig()
 
 	r.Config.ReconciliationStatus.SetEndpointsReconciled(false)
 	r.reconciling.Add(1)
@@ -93,6 +92,10 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			count := r.reconciling.Add(-1)
 			if count == 0 {
 				r.Config.ReconciliationStatus.SetEndpointsReconciled(true)
+				// Log only once when initial reconciliation completes
+				if !r.initialReconcileLogged.Swap(true) {
+					ctrl.Log.WithName("EDS").Info("EDS reconciliation complete")
+				}
 			}
 		}()
 
@@ -206,6 +209,8 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Add a Runnable to initialize total count after cache sync
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		log := ctrl.Log.WithName("EDS")
+
 		// Wait for cache to sync
 		if !mgr.GetCache().WaitForCacheSync(ctx) {
 			return fmt.Errorf("failed to sync cache")
@@ -218,7 +223,14 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 
 		// Initialize reconciliation status
-		r.Config.ReconciliationStatus.SetEndpointsReconciled(len(endpointList.Items) == 0)
+		count := len(endpointList.Items)
+		log.Info("Initializing EDS controller", "resources", count)
+		if count > 0 {
+			r.Config.ReconciliationStatus.SetHasEndpoints(true)
+			log.Info("EDS reconciliation starting", "resources", count)
+		} else {
+			log.Info("EDS reconciliation complete", "resources", 0)
+		}
 		return nil
 	})); err != nil {
 		return err

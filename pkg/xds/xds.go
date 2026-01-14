@@ -50,12 +50,14 @@ func GenerateSnapshotsV2(ctx context.Context, x *Config) ([]SnapshotConfig, erro
 	// Initialize resources map
 	resources := make(map[string]map[string][]types.Resource)
 
-	// Gather resources sequentially
+	// Acquire read lock while reading config maps to prevent race with controllers
+	x.RLockConfig()
 	resources = getResourcesFromSecretConfigs(x, resources)
 	resources = getResourcesFromListenerConfigs(x, resources)
 	resources = getResourcesFromClusterConfigs(x, resources)
 	resources = getResourcesFromRouteConfigs(x, resources)
 	resources = getResourcesFromEndpointConfigs(x, resources)
+	x.RUnlockConfig()
 
 	// Pre-allocate snapshot slice
 	sc := make([]SnapshotConfig, 0, len(resources))
@@ -351,8 +353,32 @@ type Config struct {
 	LeaderID string
 	mu       sync.RWMutex
 
+	// configMu protects all config maps (SecretConfigs, ListenerConfigs, etc.)
+	// Controllers acquire write lock, snapshot generation acquires read lock
+	configMu sync.RWMutex
+
 	// Counter for configuration changes
 	configChangeCounter atomic.Uint64
+}
+
+// LockConfig acquires write lock on config maps - use when modifying configs
+func (c *Config) LockConfig() {
+	c.configMu.Lock()
+}
+
+// UnlockConfig releases write lock on config maps
+func (c *Config) UnlockConfig() {
+	c.configMu.Unlock()
+}
+
+// RLockConfig acquires read lock on config maps - use when reading configs
+func (c *Config) RLockConfig() {
+	c.configMu.RLock()
+}
+
+// RUnlockConfig releases read lock on config maps
+func (c *Config) RUnlockConfig() {
+	c.configMu.RUnlock()
 }
 
 // IncrementConfigCounter increments the config change counter

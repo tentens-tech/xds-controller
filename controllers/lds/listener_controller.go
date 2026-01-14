@@ -118,11 +118,12 @@ import (
 // ListenerReconciler reconciles a Listener object
 type ListenerReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Config            *xds.Config
-	mutex             sync.Mutex
-	reconciling       atomic.Int32
-	lastReconcileTime atomic.Int64
+	Scheme                 *runtime.Scheme
+	Config                 *xds.Config
+	reconciling            atomic.Int32
+	lastReconcileTime      atomic.Int64
+	initialStartLogged     atomic.Bool
+	initialReconcileLogged atomic.Bool
 }
 
 // ErrorDuplicateFound is returned when a duplicate domain is found in filter chains.
@@ -144,6 +145,11 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
 	}
 
+	// Log only once when LDS actually starts reconciling (dependencies ready)
+	if !r.initialStartLogged.Swap(true) {
+		ctrl.Log.WithName("LDS").Info("LDS reconciliation starting")
+	}
+
 	r.Config.ReconciliationStatus.SetListenersReconciled(false)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
@@ -158,6 +164,10 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			count := r.reconciling.Add(-1)
 			if count == 0 {
 				r.Config.ReconciliationStatus.SetListenersReconciled(true)
+				// Log only once when initial reconciliation completes
+				if !r.initialReconcileLogged.Swap(true) {
+					ctrl.Log.WithName("LDS").Info("LDS reconciliation complete")
+				}
 			}
 		}()
 
@@ -298,6 +308,8 @@ func (r *ListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Add a Runnable to initialize total count after cache sync
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		log := ctrl.Log.WithName("LDS")
+
 		// Wait for cache to sync
 		if !mgr.GetCache().WaitForCacheSync(ctx) {
 			return fmt.Errorf("failed to sync cache")
@@ -310,7 +322,14 @@ func (r *ListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 
 		// Initialize reconciliation status
-		r.Config.ReconciliationStatus.SetListenersReconciled(len(listenerConfigList.Items) == 0)
+		count := len(listenerConfigList.Items)
+		log.Info("Initializing LDS controller", "resources", count)
+		if count > 0 {
+			r.Config.ReconciliationStatus.SetHasListeners(true)
+			log.Info("LDS waiting for RDS and SDS to complete", "resources", count)
+		} else {
+			log.Info("LDS reconciliation complete", "resources", 0)
+		}
 		return nil
 	})); err != nil {
 		return err
@@ -386,13 +405,13 @@ func (r *ListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *ListenerReconciler) removeListenerFromNodes(ctx context.Context, listenerName string, nodes map[string]struct{}) {
 	log := ctrllog.FromContext(ctx)
 	var removed bool
+
+	r.Config.LockConfig()
 	for nodeID := range nodes {
 		for i := len(r.Config.ListenerConfigs[nodeID]) - 1; i >= 0; i-- {
 			l := r.Config.ListenerConfigs[nodeID][i]
 			if l.Name == listenerName {
-				r.mutex.Lock()
 				r.Config.ListenerConfigs[nodeID] = append(r.Config.ListenerConfigs[nodeID][:i], r.Config.ListenerConfigs[nodeID][i+1:]...)
-				r.mutex.Unlock()
 				removed = true
 				r.Config.IncrementConfigCounter()
 			}
@@ -418,6 +437,8 @@ func (r *ListenerReconciler) removeListenerFromNodes(ctx context.Context, listen
 			}
 		}
 	}
+	r.Config.UnlockConfig()
+
 	if removed {
 		log.V(0).WithName(listenerName).Info("Removed listener")
 	}
@@ -478,6 +499,10 @@ func (r *ListenerReconciler) getRoutesForNode(l envoyxdsv1alpha1.Listener, nodei
 func (r *ListenerReconciler) updateListenerConfig(ctx context.Context, node string, lds *listenerv3.Listener) {
 	log := ctrllog.FromContext(ctx)
 	nodeInfo, _ := util.GetNodeInfo(node) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
+
+	r.Config.LockConfig()
+	defer r.Config.UnlockConfig()
+
 	if r.Config.ListenerConfigs == nil {
 		r.Config.ListenerConfigs = make(map[string][]*listenerv3.Listener)
 	}
@@ -495,8 +520,6 @@ func (r *ListenerReconciler) updateListenerConfig(ctx context.Context, node stri
 	}
 
 	if !updated {
-		r.mutex.Lock()
-		defer r.mutex.Unlock()
 		r.Config.ListenerConfigs[node] = append(r.Config.ListenerConfigs[node], lds)
 		log.V(2).Info("Added listener", "filtersCount", len(lds.FilterChains), "nodes", nodeInfo.Nodes, "clusters", nodeInfo.Clusters)
 		r.Config.IncrementConfigCounter()

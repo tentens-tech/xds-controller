@@ -280,8 +280,8 @@ func TestCertNotFoundGeneratingError_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigStaging).Return(xdstypes.Cert{}, xdserr.ErrCertNotFound).AnyTimes()
-	config.EXPECT().StorageConfigWrite(mockDomainConfigStaging, xdstypes.Cert{}).Return(nil).AnyTimes()
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigStaging).Return(xdstypes.Cert{}, xdserr.ErrCertNotFound).AnyTimes()
+	config.EXPECT().CheckVaultWriteAccess(mockDomainConfigStaging).Return(nil).AnyTimes()
 
 	le := mock.NewMockCertGetter(ctl)
 	le.EXPECT().Get(mockDomainConfigStaging).Return(xdstypes.Cert{}, xdserr.ErrGetCert).AnyTimes()
@@ -300,8 +300,8 @@ func TestCertNotFoundGenerating_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigStaging).Return(xdstypes.Cert{}, xdserr.ErrCertNotFound).AnyTimes()
-	config.EXPECT().StorageConfigWrite(mockDomainConfigStaging, xdstypes.Cert{}).Return(nil).AnyTimes()
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigStaging).Return(xdstypes.Cert{}, xdserr.ErrCertNotFound).AnyTimes()
+	config.EXPECT().CheckVaultWriteAccess(mockDomainConfigStaging).Return(nil).AnyTimes()
 	config.EXPECT().StorageConfigWrite(mockDomainConfigStaging, mockCert99Staging).Return(nil).AnyTimes()
 
 	le := mock.NewMockCertGetter(ctl)
@@ -336,7 +336,7 @@ func TestCertIsManualAndNotFoundNoError_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigManual).Return(xdstypes.Cert{}, xdserr.ErrCertNotFound).AnyTimes()
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigManual).Return(xdstypes.Cert{}, xdserr.ErrCertNotFound).AnyTimes()
 
 	le := mock.NewMockCertGetter(ctl)
 
@@ -356,7 +356,10 @@ func TestCertFromOneDomainToMulti_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockMultiDomainConfigStaging).Return(mockCert99Staging, nil).AnyTimes()
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockMultiDomainConfigStaging).Return(mockCert99Staging, nil).AnyTimes()
+	// Check vault write access before expensive LE operations (forceRegenerate due to domain count change)
+	config.EXPECT().CheckVaultWriteAccess(mockMultiDomainConfigStaging).Return(nil).AnyTimes()
+	// Write new cert after successful generation
 	config.EXPECT().StorageConfigWrite(mockMultiDomainConfigStaging, mockCert99Staging).Return(nil).AnyTimes()
 
 	le := mock.NewMockCertGetter(ctl)
@@ -393,7 +396,7 @@ func TestCertStaging_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigStaging).Return(mockCert99Staging, nil).AnyTimes()
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigStaging).Return(mockCert99Staging, nil).AnyTimes()
 
 	want := &auth.Secret{
 		Name: mockDomainConfigStaging.SecretName,
@@ -426,7 +429,7 @@ func TestCertProduction_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigProduction).Return(mockCert99Production, nil).AnyTimes()
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigProduction).Return(mockCert99Production, nil).AnyTimes()
 
 	want := &auth.Secret{
 		Name: mockDomainConfigProduction.SecretName,
@@ -461,10 +464,10 @@ func TestCertChangedEnvStageToProd_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigProduction).Return(mockCert99Staging, nil).AnyTimes()
-	// First write: existing cert to check vault access before renewal
-	config.EXPECT().StorageConfigWrite(mockDomainConfigProduction, mockCert99Staging).Return(nil).AnyTimes()
-	// Second write: new cert after successful generation
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigProduction).Return(mockCert99Staging, nil).AnyTimes()
+	// Check vault write access before expensive LE operations (forceRegenerate due to env change)
+	config.EXPECT().CheckVaultWriteAccess(mockDomainConfigProduction).Return(nil).AnyTimes()
+	// Write new cert after successful generation
 	config.EXPECT().StorageConfigWrite(mockDomainConfigProduction, mockCert99Production).Return(nil).AnyTimes()
 
 	want := &auth.Secret{
@@ -497,14 +500,14 @@ func TestCertChangedEnvProdToStage_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigStaging).Return(mockCert99Production, nil).AnyTimes()
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigStaging).Return(mockCert99Production, nil).AnyTimes()
 
 	le := mock.NewMockCertGetter(ctl)
 	le.EXPECT().Get(mockDomainConfigStaging).Return(mockCert99Staging, nil).AnyTimes()
 
-	// First write: existing cert to check vault access before renewal
-	config.EXPECT().StorageConfigWrite(mockDomainConfigStaging, mockCert99Production).Return(nil).AnyTimes()
-	// Second write: new cert after successful generation
+	// Check vault write access before expensive LE operations (forceRegenerate due to env change)
+	config.EXPECT().CheckVaultWriteAccess(mockDomainConfigStaging).Return(nil).AnyTimes()
+	// Write new cert after successful generation
 	config.EXPECT().StorageConfigWrite(mockDomainConfigStaging, mockCert99Staging).Return(nil).AnyTimes()
 
 	want := &auth.Secret{
@@ -539,10 +542,10 @@ func TestCertNotFound_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigStaging).Return(xdstypes.Cert{}, xdserr.ErrCertNotFound).AnyTimes()
-	// First write: empty cert to check vault access
-	config.EXPECT().StorageConfigWrite(mockDomainConfigStaging, xdstypes.Cert{}).Return(nil).AnyTimes()
-	// Second write: actual cert after successful generation
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigStaging).Return(xdstypes.Cert{}, xdserr.ErrCertNotFound).AnyTimes()
+	// Check vault write access before expensive LE operations
+	config.EXPECT().CheckVaultWriteAccess(mockDomainConfigStaging).Return(nil).AnyTimes()
+	// Write actual cert after successful generation
 	config.EXPECT().StorageConfigWrite(mockDomainConfigStaging, mockCert99Staging).Return(nil).AnyTimes()
 
 	want := &auth.Secret{
@@ -574,11 +577,14 @@ func TestCertRenew_makeSecrets(t *testing.T) {
 	}).AnyTimes()
 	config.EXPECT().GetDryRun().Return(false).AnyTimes()
 	config.EXPECT().GetRenewBeforeExpireInMinutes().Return(1440).AnyTimes()
-	config.EXPECT().StorageConfigRead(mockDomainConfigStaging).Return(mockCert1dStaging, nil).AnyTimes()
+	config.EXPECT().StorageConfigRead(gomock.Any(), mockDomainConfigStaging).Return(mockCert1dStaging, nil).AnyTimes()
 
 	le := mock.NewMockCertGetter(ctl)
 	le.EXPECT().Get(mockDomainConfigStaging).Return(mockCert99Staging, nil).AnyTimes()
 
+	// Check vault write access before expensive LE operations (renewal due to expiry)
+	config.EXPECT().CheckVaultWriteAccess(mockDomainConfigStaging).Return(nil).AnyTimes()
+	// Write new cert after successful generation
 	config.EXPECT().StorageConfigWrite(mockDomainConfigStaging, mockCert99Staging).Return(nil).AnyTimes()
 
 	want := &auth.Secret{
