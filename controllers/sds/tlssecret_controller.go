@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,11 +48,11 @@ import (
 // TLSSecretReconciler reconciles a TLSSecret object
 type TLSSecretReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Config            *xds.Config
-	mutex             sync.Mutex
-	reconciling       atomic.Int32
-	lastReconcileTime atomic.Int64
+	Scheme                 *runtime.Scheme
+	Config                 *xds.Config
+	reconciling            atomic.Int32
+	lastReconcileTime      atomic.Int64
+	initialReconcileLogged atomic.Bool
 }
 
 //+kubebuilder:rbac:groups=envoyxds.io,resources=tlssecrets,verbs=get;list;watch;create;update;patch;delete
@@ -66,8 +65,11 @@ type TLSSecretReconciler struct {
 // move the current state of the cluster closer to the desired state.
 func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
+
+	// Check for shutdown signal
+	if ctx.Err() != nil {
+		return ctrl.Result{}, nil
+	}
 
 	r.Config.ReconciliationStatus.SetDomainConfigsReconciled(false)
 	r.reconciling.Add(1)
@@ -86,6 +88,10 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			count := r.reconciling.Add(-1)
 			if count == 0 {
 				r.Config.ReconciliationStatus.SetDomainConfigsReconciled(true)
+				// Log only once when initial reconciliation completes
+				if !r.initialReconcileLogged.Swap(true) {
+					ctrl.Log.WithName("SDS").Info("SDS reconciliation complete")
+				}
 			}
 		}()
 
@@ -118,6 +124,7 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	nodeid := util.GetNodeID(tlsSecret.Annotations)
 
 	if !tlsSecretFound {
+		r.Config.LockConfig()
 		for node := range r.Config.SecretConfigs {
 			for i, c := range r.Config.SecretConfigs[node] {
 				if c.Name == req.Name {
@@ -127,6 +134,7 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				}
 			}
 		}
+		r.Config.UnlockConfig()
 		return ctrl.Result{}, nil
 	}
 
@@ -182,10 +190,21 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	certInfo := extractCertificateInfo(sds)
 
 	sds.Name = tlsSecret.Name
+
+	// Use granular locking for SecretConfigs access to allow parallel reconciliation
+	r.Config.LockConfig()
+	var found bool
+	var foundNode string
+	var needsReplace bool
+	var unchanged bool
+
 	for node := range r.Config.SecretConfigs {
 		for k, v := range r.Config.SecretConfigs[node] {
 			if v.Name == tlsSecret.Name {
+				found = true
+				foundNode = node
 				if nodeid != node {
+					needsReplace = true
 					log.V(0).Info("Replacing secret", "next_renewal", nextRenewal)
 					r.Config.SecretConfigs[node] = append(r.Config.SecretConfigs[node][:k], r.Config.SecretConfigs[node][k+1:]...)
 					if r.Config.SecretConfigs[nodeid] == nil {
@@ -193,53 +212,56 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					}
 					r.Config.SecretConfigs[nodeid] = append(r.Config.SecretConfigs[nodeid], sds)
 					r.Config.IncrementConfigCounter()
-					// Update status
-					if statusErr := r.updateTLSSecretStatus(ctx, &tlsSecret, true, []string{nodeid}, nextRenewal, certInfo, ""); statusErr != nil {
-						log.Error(statusErr, "unable to update TLSSecret status")
-					}
-					return ctrl.Result{
-						RequeueAfter: requeueAfter,
-					}, nil
 				} else {
 					// Avoid reapplying config if secret content has not changed
 					if secretsEqual(r.Config.SecretConfigs[node][k], sds) {
+						unchanged = true
 						log.V(2).Info("Secret unchanged; skipping config apply", "next_renewal", nextRenewal)
-						// Still update status
-						if statusErr := r.updateTLSSecretStatus(ctx, &tlsSecret, true, []string{node}, nextRenewal, certInfo, ""); statusErr != nil {
-							log.Error(statusErr, "unable to update TLSSecret status")
-						}
-						return ctrl.Result{
-							RequeueAfter: requeueAfter,
-						}, nil
+					} else {
+						log.V(0).Info("Updating secret", "next_renewal", nextRenewal)
+						r.Config.SecretConfigs[node][k] = sds
+						r.Config.IncrementConfigCounter()
 					}
-					log.V(0).Info("Updating secret", "next_renewal", nextRenewal)
-					r.Config.SecretConfigs[node][k] = sds
-					r.Config.IncrementConfigCounter()
-					// Update status
-					if statusErr := r.updateTLSSecretStatus(ctx, &tlsSecret, true, []string{node}, nextRenewal, certInfo, ""); statusErr != nil {
-						log.Error(statusErr, "unable to update TLSSecret status")
-					}
-					return ctrl.Result{
-						RequeueAfter: requeueAfter,
-					}, nil
 				}
+				break
 			}
+		}
+		if found {
+			break
 		}
 	}
 
-	log.V(2).Info("Adding secret", "next_renewal", nextRenewal)
-	if r.Config.SecretConfigs == nil {
-		r.Config.SecretConfigs = make(map[string][]*auth.Secret)
+	if !found {
+		log.V(2).Info("Adding secret", "next_renewal", nextRenewal)
+		if r.Config.SecretConfigs == nil {
+			r.Config.SecretConfigs = make(map[string][]*auth.Secret)
+		}
+		if r.Config.SecretConfigs[nodeid] == nil {
+			r.Config.SecretConfigs[nodeid] = []*auth.Secret{}
+		}
+		r.Config.IncrementConfigCounter()
+		r.Config.SecretConfigs[nodeid] = append(r.Config.SecretConfigs[nodeid], sds)
 	}
-	if r.Config.SecretConfigs[nodeid] == nil {
-		r.Config.SecretConfigs[nodeid] = []*auth.Secret{}
+	r.Config.UnlockConfig()
+
+	// Status updates happen outside the lock to minimize lock contention
+	var statusNodeID string
+	if needsReplace || !found {
+		statusNodeID = nodeid
+	} else {
+		statusNodeID = foundNode
 	}
-	r.Config.IncrementConfigCounter()
-	r.Config.SecretConfigs[nodeid] = append(r.Config.SecretConfigs[nodeid], sds)
-	// Update status
-	if statusErr := r.updateTLSSecretStatus(ctx, &tlsSecret, true, []string{nodeid}, nextRenewal, certInfo, ""); statusErr != nil {
+
+	if statusErr := r.updateTLSSecretStatus(ctx, &tlsSecret, true, []string{statusNodeID}, nextRenewal, certInfo, ""); statusErr != nil {
 		log.Error(statusErr, "unable to update TLSSecret status")
 	}
+
+	if unchanged {
+		return ctrl.Result{
+			RequeueAfter: requeueAfter,
+		}, nil
+	}
+
 	return ctrl.Result{
 		RequeueAfter: requeueAfter,
 	}, nil
@@ -250,6 +272,8 @@ func (r *TLSSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Add a Runnable to initialize total count after cache sync
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		log := ctrl.Log.WithName("SDS")
+
 		// Wait for cache to sync
 		if !mgr.GetCache().WaitForCacheSync(ctx) {
 			return fmt.Errorf("failed to sync cache")
@@ -262,7 +286,14 @@ func (r *TLSSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 
 		// Initialize reconciliation status
-		r.Config.ReconciliationStatus.SetDomainConfigsReconciled(len(tlsSecretList.Items) == 0)
+		count := len(tlsSecretList.Items)
+		log.Info("Initializing SDS controller", "resources", count)
+		if count > 0 {
+			r.Config.ReconciliationStatus.SetHasDomainConfigs(true)
+			log.Info("SDS reconciliation starting", "resources", count)
+		} else {
+			log.Info("SDS reconciliation complete", "resources", 0)
+		}
 		return nil
 	})); err != nil {
 		return err
@@ -270,7 +301,7 @@ func (r *TLSSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.Options{
-			MaxConcurrentReconciles: 1,
+			MaxConcurrentReconciles: 10,
 		}).
 		For(&envoyxdsv1alpha1.TLSSecret{}).
 		WithEventFilter(predicate.GenerationChangedPredicate{}).

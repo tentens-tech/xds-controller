@@ -22,7 +22,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -98,6 +97,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
@@ -111,11 +111,11 @@ import (
 // RouteReconciler reconciles a Route object
 type RouteReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Config            *xds.Config
-	mutex             sync.Mutex
-	reconciling       atomic.Int32
-	lastReconcileTime atomic.Int64
+	Scheme                 *runtime.Scheme
+	Config                 *xds.Config
+	reconciling            atomic.Int32
+	lastReconcileTime      atomic.Int64
+	initialReconcileLogged atomic.Bool
 }
 
 //+kubebuilder:rbac:groups=envoyxds.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
@@ -148,6 +148,10 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			count := r.reconciling.Add(-1)
 			if count == 0 {
 				r.Config.ReconciliationStatus.SetRoutesReconciled(true)
+				// Log only once when initial reconciliation completes
+				if !r.initialReconcileLogged.Swap(true) {
+					ctrl.Log.WithName("RDS").Info("RDS reconciliation complete")
+				}
 			}
 		}()
 
@@ -265,9 +269,9 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 							nodeInfo.Clusters,
 							currentMatch.ServerNames,
 						)
-						r.mutex.Lock()
+						r.Config.LockConfig()
 						r.Config.RouteConfigs[node] = r.deleteRouteConfig(node, rds.Name)
-						r.mutex.Unlock()
+						r.Config.UnlockConfig()
 						log.Error(fmt.Errorf("%s", errMsg), "filter chain match conflict")
 						xds.RecordConfigError(rds.Name, "RDS", errMsg)
 						// Update status with error
@@ -278,9 +282,9 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 					} else {
 						// Current route is older - remove newer route and continue with adding this one
 						log.V(1).Info(fmt.Sprintf("removing newer route '%s' as it conflicts with older route '%s'", existingRC.Route.Name, rds.Name))
-						r.mutex.Lock()
+						r.Config.LockConfig()
 						r.Config.RouteConfigs[node] = r.deleteRouteConfig(node, existingRC.Route.Name)
-						r.mutex.Unlock()
+						r.Config.UnlockConfig()
 
 						// Record error for the removed route
 						errMsg := fmt.Sprintf(
@@ -325,6 +329,35 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Add a Runnable to initialize total count after cache sync
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		log := ctrl.Log.WithName("RDS")
+
+		// Wait for cache to sync
+		if !mgr.GetCache().WaitForCacheSync(ctx) {
+			return fmt.Errorf("failed to sync cache")
+		}
+
+		// Now it's safe to list resources
+		var routeList envoyxdsv1alpha1.RouteList
+		if err := r.List(ctx, &routeList); err != nil {
+			return fmt.Errorf("unable to list Routes: %w", err)
+		}
+
+		// Initialize reconciliation status
+		count := len(routeList.Items)
+		log.Info("Initializing RDS controller", "resources", count)
+		if count > 0 {
+			r.Config.ReconciliationStatus.SetHasRoutes(true)
+			log.Info("RDS reconciliation starting", "resources", count)
+		} else {
+			log.Info("RDS reconciliation complete", "resources", 0)
+		}
+		return nil
+	})); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&envoyxdsv1alpha1.Route{}).
 		Watches(&envoyxdsv1alpha1.Listener{}, handler.EnqueueRequestsFromMapFunc(
@@ -629,10 +662,10 @@ func (r *RouteReconciler) removeRouteFromNodes(ctx context.Context, routeName st
 		for i := len(r.Config.RouteConfigs[nodeID]) - 1; i >= 0; i-- {
 			route := r.Config.RouteConfigs[nodeID][i]
 			if route.Route.Name == routeName {
-				r.mutex.Lock()
+				r.Config.LockConfig()
 				r.Config.RouteConfigs[nodeID] = append(r.Config.RouteConfigs[nodeID][:i], r.Config.RouteConfigs[nodeID][i+1:]...)
 				removed = true
-				r.mutex.Unlock()
+				r.Config.UnlockConfig()
 				r.Config.IncrementConfigCounter()
 			}
 		}
@@ -644,8 +677,8 @@ func (r *RouteReconciler) removeRouteFromNodes(ctx context.Context, routeName st
 }
 
 func (r *RouteReconciler) updateRouteConfig(node string, listenerNames []string, route *envoyxdsv1alpha1.Route, rd *routev3.RouteConfiguration) bool {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
+	r.Config.LockConfig()
+	defer r.Config.UnlockConfig()
 	if r.Config.RouteConfigs == nil {
 		r.Config.RouteConfigs = make(map[string][]*xds.RouteConfig)
 	}

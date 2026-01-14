@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -87,11 +86,11 @@ import (
 // ClusterReconciler reconciles a Cluster object
 type ClusterReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Config            *xds.Config
-	mutex             sync.Mutex
-	reconciling       atomic.Int32
-	lastReconcileTime atomic.Int64
+	Scheme                 *runtime.Scheme
+	Config                 *xds.Config
+	reconciling            atomic.Int32
+	lastReconcileTime      atomic.Int64
+	initialReconcileLogged atomic.Bool
 }
 
 //+kubebuilder:rbac:groups=envoyxds.io,resources=clusters,verbs=get;list;watch;create;update;patch;delete
@@ -107,8 +106,8 @@ type ClusterReconciler struct {
 func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
+	r.Config.LockConfig()
+	defer r.Config.UnlockConfig()
 
 	r.Config.ReconciliationStatus.SetClustersReconciled(false)
 	r.reconciling.Add(1)
@@ -124,6 +123,10 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			count := r.reconciling.Add(-1)
 			if count == 0 {
 				r.Config.ReconciliationStatus.SetClustersReconciled(true)
+				// Log only once when initial reconciliation completes
+				if !r.initialReconcileLogged.Swap(true) {
+					ctrl.Log.WithName("CDS").Info("CDS reconciliation complete")
+				}
 			}
 		}()
 
@@ -350,6 +353,8 @@ func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Add a Runnable to initialize total count after cache sync
 	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		log := ctrl.Log.WithName("CDS")
+
 		// Wait for cache to sync
 		if !mgr.GetCache().WaitForCacheSync(ctx) {
 			return fmt.Errorf("failed to sync cache")
@@ -362,7 +367,14 @@ func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 
 		// Initialize reconciliation status
-		r.Config.ReconciliationStatus.SetClustersReconciled(len(clusterConfigList.Items) == 0)
+		count := len(clusterConfigList.Items)
+		log.Info("Initializing CDS controller", "resources", count)
+		if count > 0 {
+			r.Config.ReconciliationStatus.SetHasClusters(true)
+			log.Info("CDS reconciliation starting", "resources", count)
+		} else {
+			log.Info("CDS reconciliation complete", "resources", 0)
+		}
 		return nil
 	})); err != nil {
 		return err

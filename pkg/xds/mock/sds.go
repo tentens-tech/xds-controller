@@ -5,6 +5,7 @@
 package mock_xds
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
@@ -72,6 +73,20 @@ func (m *MockGlobalConfig) EXPECT() *MockGlobalConfigMockRecorder {
 	return m.recorder
 }
 
+// CheckVaultWriteAccess mocks base method.
+func (m *MockGlobalConfig) CheckVaultWriteAccess(d *types.DomainConfig) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckVaultWriteAccess", d)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CheckVaultWriteAccess indicates an expected call of CheckVaultWriteAccess.
+func (mr *MockGlobalConfigMockRecorder) CheckVaultWriteAccess(d interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckVaultWriteAccess", reflect.TypeOf((*MockGlobalConfig)(nil).CheckVaultWriteAccess), d)
+}
+
 // GetDomainConfigs mocks base method.
 func (m *MockGlobalConfig) GetDomainConfigs() map[string][]*types.DomainConfig {
 	m.ctrl.T.Helper()
@@ -129,18 +144,18 @@ func (mr *MockGlobalConfigMockRecorder) GetRndNumber() *gomock.Call {
 }
 
 // StorageConfigRead mocks base method.
-func (m *MockGlobalConfig) StorageConfigRead(d *types.DomainConfig) (types.Cert, error) {
+func (m *MockGlobalConfig) StorageConfigRead(ctx context.Context, d *types.DomainConfig) (types.Cert, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StorageConfigRead", d)
+	ret := m.ctrl.Call(m, "StorageConfigRead", ctx, d)
 	ret0, _ := ret[0].(types.Cert)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // StorageConfigRead indicates an expected call of StorageConfigRead.
-func (mr *MockGlobalConfigMockRecorder) StorageConfigRead(d interface{}) *gomock.Call {
+func (mr *MockGlobalConfigMockRecorder) StorageConfigRead(ctx, d interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StorageConfigRead", reflect.TypeOf((*MockGlobalConfig)(nil).StorageConfigRead), d)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StorageConfigRead", reflect.TypeOf((*MockGlobalConfig)(nil).StorageConfigRead), ctx, d)
 }
 
 // StorageConfigWrite mocks base method.
@@ -180,19 +195,33 @@ func (m *MockStorageConfigReaderWriter) EXPECT() *MockStorageConfigReaderWriterM
 	return m.recorder
 }
 
-// StorageConfigRead mocks base method.
-func (m *MockStorageConfigReaderWriter) StorageConfigRead(d *types.DomainConfig) (types.Cert, error) {
+// CheckVaultWriteAccess mocks base method.
+func (m *MockStorageConfigReaderWriter) CheckVaultWriteAccess(d *types.DomainConfig) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StorageConfigRead", d)
+	ret := m.ctrl.Call(m, "CheckVaultWriteAccess", d)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CheckVaultWriteAccess indicates an expected call of CheckVaultWriteAccess.
+func (mr *MockStorageConfigReaderWriterMockRecorder) CheckVaultWriteAccess(d interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckVaultWriteAccess", reflect.TypeOf((*MockStorageConfigReaderWriter)(nil).CheckVaultWriteAccess), d)
+}
+
+// StorageConfigRead mocks base method.
+func (m *MockStorageConfigReaderWriter) StorageConfigRead(ctx context.Context, d *types.DomainConfig) (types.Cert, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "StorageConfigRead", ctx, d)
 	ret0, _ := ret[0].(types.Cert)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // StorageConfigRead indicates an expected call of StorageConfigRead.
-func (mr *MockStorageConfigReaderWriterMockRecorder) StorageConfigRead(d interface{}) *gomock.Call {
+func (mr *MockStorageConfigReaderWriterMockRecorder) StorageConfigRead(ctx, d interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StorageConfigRead", reflect.TypeOf((*MockStorageConfigReaderWriter)(nil).StorageConfigRead), d)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StorageConfigRead", reflect.TypeOf((*MockStorageConfigReaderWriter)(nil).StorageConfigRead), ctx, d)
 }
 
 // StorageConfigWrite mocks base method.

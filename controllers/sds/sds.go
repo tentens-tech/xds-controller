@@ -171,7 +171,7 @@ func makeSecret(ctx context.Context, d *xdstypes.DomainConfig, x xds.GlobalConfi
 	s := &auth.Secret{Name: d.SecretName}
 	var cert xdstypes.Cert
 	log.V(2).Info("checking certificate secret", "secretName", d.SecretName)
-	cert, err := x.StorageConfigRead(d)
+	cert, err := x.StorageConfigRead(ctx, d)
 	if len(cert.Priv) != 0 && len(cert.Pub) != 0 {
 		s = &auth.Secret{
 			Name: d.SecretName,
@@ -208,15 +208,14 @@ func makeSecret(ctx context.Context, d *xdstypes.DomainConfig, x xds.GlobalConfi
 			return s, defaultDuration, time.Time{}, nil
 		}
 
-		// For Vault storage, create empty cert to check if we can write before expensive LE operations
-		// Skip this for Kubernetes storage to avoid creating empty secrets
+		// For Vault storage, verify write access before expensive LE operations
 		if d.Config.Type == xdstypes.Vault {
-			err = x.StorageConfigWrite(d, xdstypes.Cert{})
-			if errors.Is(err, xdserr.ErrVaultNotConfigured) {
-				log.V(0).Info(err.Error())
-				return nil, defaultDuration, time.Time{}, err
-			} else if err != nil {
-				return s, defaultDuration, time.Time{}, fmt.Errorf(xdserr.ErrWriteCert.Error()+": %w", err)
+			if err = x.CheckVaultWriteAccess(d); err != nil {
+				if errors.Is(err, xdserr.ErrVaultNotConfigured) {
+					log.V(0).Info(err.Error())
+					return nil, defaultDuration, time.Time{}, err
+				}
+				return s, defaultDuration, time.Time{}, fmt.Errorf("vault access check failed: %w", err)
 			}
 		}
 
@@ -320,12 +319,14 @@ func makeSecret(ctx context.Context, d *xdstypes.DomainConfig, x xds.GlobalConfi
 			return s, defaultDuration, time.Time{}, xdserr.ErrBadKeyData
 		}
 
-		// For Vault storage, check if we can write before expensive LE operations
+		// For Vault storage, verify write access before expensive LE operations
 		if d.Config.Type == xdstypes.Vault {
-			err = x.StorageConfigWrite(d, cert)
-			if errors.Is(err, xdserr.ErrVaultNotConfigured) {
-				log.V(0).Info(err.Error())
-				return nil, defaultDuration, time.Time{}, err
+			if err = x.CheckVaultWriteAccess(d); err != nil {
+				if errors.Is(err, xdserr.ErrVaultNotConfigured) {
+					log.V(0).Info(err.Error())
+					return nil, defaultDuration, time.Time{}, err
+				}
+				return s, defaultDuration, time.Time{}, fmt.Errorf("vault access check failed: %w", err)
 			}
 		}
 
