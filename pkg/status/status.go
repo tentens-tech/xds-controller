@@ -172,8 +172,11 @@ func (rs *ReconciliationStatus) AllReconciledWithSnapshot() bool {
 	if !rs.HasAnyResources() {
 		return true
 	}
-	// If we have resources, check if they've all been reconciled and snapshot generated
-	return rs.AllReconciled() && rs.IsSnapshotGenerated()
+
+	if rs.IsSnapshotGenerated() {
+		return true
+	}
+	return rs.AllReconciled()
 }
 
 // AllReconciled checks if all components have been reconciled.

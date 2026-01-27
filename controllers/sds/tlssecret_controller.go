@@ -32,6 +32,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -437,112 +439,123 @@ func (r *TLSSecretReconciler) updateTLSSecretStatus(ctx context.Context, tlsSecr
 	}
 	sort.Strings(clustersList)
 
-	// Build conditions
-	conditions := tlsSecret.Status.Conditions
-	if conditions == nil {
-		conditions = []metav1.Condition{}
-	}
+	// Use retry to handle conflicts when updating status
+	tlsSecretKey := types.NamespacedName{Name: tlsSecret.Name, Namespace: tlsSecret.Namespace}
+	generation := tlsSecret.Generation
 
-	// Update Ready condition
-	readyCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.TLSSecretConditionReady,
-		LastTransitionTime: now,
-		ObservedGeneration: tlsSecret.Generation,
-	}
-	if active {
-		readyCondition.Status = metav1.ConditionTrue
-		readyCondition.Reason = "Active"
-		readyCondition.Message = fmt.Sprintf("Secret is active in %d snapshots", len(snapshots))
-	} else {
-		readyCondition.Status = metav1.ConditionFalse
-		readyCondition.Reason = "Inactive"
-		readyCondition.Message = message
-	}
-	conditions = updateTLSSecretCondition(conditions, readyCondition)
-
-	// Update Reconciled condition
-	reconciledCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.TLSSecretConditionReconciled,
-		Status:             metav1.ConditionTrue,
-		LastTransitionTime: now,
-		Reason:             "Reconciled",
-		Message:            "Successfully reconciled",
-		ObservedGeneration: tlsSecret.Generation,
-	}
-	conditions = updateTLSSecretCondition(conditions, reconciledCondition)
-
-	// Update Error condition if there's an error
-	if message != "" && !active {
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.TLSSecretConditionError,
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: now,
-			Reason:             "Error",
-			Message:            message,
-			ObservedGeneration: tlsSecret.Generation,
-		}
-		conditions = updateTLSSecretCondition(conditions, errorCondition)
-	} else {
-		// Clear error condition
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.TLSSecretConditionError,
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: now,
-			Reason:             "NoError",
-			Message:            "",
-			ObservedGeneration: tlsSecret.Generation,
-		}
-		conditions = updateTLSSecretCondition(conditions, errorCondition)
-	}
-
-	// Update CertExpiring condition
-	if certInfo != nil && certInfo.DaysUntilExpiry < 30 {
-		expiringCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.TLSSecretConditionCertExpiring,
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: now,
-			Reason:             "CertExpiring",
-			Message:            fmt.Sprintf("Certificate expires in %d days", certInfo.DaysUntilExpiry),
-			ObservedGeneration: tlsSecret.Generation,
-		}
-		conditions = updateTLSSecretCondition(conditions, expiringCondition)
-	} else {
-		expiringCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.TLSSecretConditionCertExpiring,
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: now,
-			Reason:             "CertValid",
-			Message:            "",
-			ObservedGeneration: tlsSecret.Generation,
-		}
-		conditions = updateTLSSecretCondition(conditions, expiringCondition)
-	}
-
-	// Prepare the new status
-	newStatus := envoyxdsv1alpha1.TLSSecretStatus{
-		Active:             active,
-		CertificateInfo:    certInfo,
-		NextRenewal:        nextRenewal,
-		Snapshots:          snapshots,
-		Nodes:              strings.Join(nodesList, ","),
-		Clusters:           strings.Join(clustersList, ","),
-		LastReconciled:     now,
-		ObservedGeneration: tlsSecret.Generation,
-		Conditions:         conditions,
-		Message:            message,
-	}
-
-	// Update status if changed
-	if !tlsSecretStatusEqual(tlsSecret.Status, newStatus) {
-		tlsSecret.Status = newStatus
-		if err := r.Status().Update(ctx, tlsSecret); err != nil {
-			log.Error(err, "unable to update TLSSecret status")
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Re-fetch the latest version of the TLSSecret to get the current resourceVersion
+		var latestTLSSecret envoyxdsv1alpha1.TLSSecret
+		if err := r.Get(ctx, tlsSecretKey, &latestTLSSecret); err != nil {
 			return err
 		}
-		log.V(2).Info("Updated tlssecret status", "active", active, "nodes", strings.Join(nodesList, ","))
-	}
 
-	return nil
+		// Build conditions from the latest tlsSecret's conditions
+		conditions := latestTLSSecret.Status.Conditions
+		if conditions == nil {
+			conditions = []metav1.Condition{}
+		}
+
+		// Update Ready condition
+		readyCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.TLSSecretConditionReady,
+			LastTransitionTime: now,
+			ObservedGeneration: generation,
+		}
+		if active {
+			readyCondition.Status = metav1.ConditionTrue
+			readyCondition.Reason = "Active"
+			readyCondition.Message = fmt.Sprintf("Secret is active in %d snapshots", len(snapshots))
+		} else {
+			readyCondition.Status = metav1.ConditionFalse
+			readyCondition.Reason = "Inactive"
+			readyCondition.Message = message
+		}
+		conditions = updateTLSSecretCondition(conditions, readyCondition)
+
+		// Update Reconciled condition
+		reconciledCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.TLSSecretConditionReconciled,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "Reconciled",
+			Message:            "Successfully reconciled",
+			ObservedGeneration: generation,
+		}
+		conditions = updateTLSSecretCondition(conditions, reconciledCondition)
+
+		// Update Error condition if there's an error
+		if message != "" && !active {
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.TLSSecretConditionError,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "Error",
+				Message:            message,
+				ObservedGeneration: generation,
+			}
+			conditions = updateTLSSecretCondition(conditions, errorCondition)
+		} else {
+			// Clear error condition
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.TLSSecretConditionError,
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: now,
+				Reason:             "NoError",
+				Message:            "",
+				ObservedGeneration: generation,
+			}
+			conditions = updateTLSSecretCondition(conditions, errorCondition)
+		}
+
+		// Update CertExpiring condition
+		if certInfo != nil && certInfo.DaysUntilExpiry < 30 {
+			expiringCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.TLSSecretConditionCertExpiring,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "CertExpiring",
+				Message:            fmt.Sprintf("Certificate expires in %d days", certInfo.DaysUntilExpiry),
+				ObservedGeneration: generation,
+			}
+			conditions = updateTLSSecretCondition(conditions, expiringCondition)
+		} else {
+			expiringCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.TLSSecretConditionCertExpiring,
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: now,
+				Reason:             "CertValid",
+				Message:            "",
+				ObservedGeneration: generation,
+			}
+			conditions = updateTLSSecretCondition(conditions, expiringCondition)
+		}
+
+		// Prepare the new status
+		newStatus := envoyxdsv1alpha1.TLSSecretStatus{
+			Active:             active,
+			CertificateInfo:    certInfo,
+			NextRenewal:        nextRenewal,
+			Snapshots:          snapshots,
+			Nodes:              strings.Join(nodesList, ","),
+			Clusters:           strings.Join(clustersList, ","),
+			LastReconciled:     now,
+			ObservedGeneration: generation,
+			Conditions:         conditions,
+			Message:            message,
+		}
+
+		// Update status if changed
+		if !tlsSecretStatusEqual(latestTLSSecret.Status, newStatus) {
+			latestTLSSecret.Status = newStatus
+			if err := r.Status().Update(ctx, &latestTLSSecret); err != nil {
+				return err
+			}
+			log.V(2).Info("Updated tlssecret status", "active", active, "nodes", strings.Join(nodesList, ","))
+		}
+
+		return nil
+	})
 }
 
 // updateTLSSecretCondition updates or adds a condition to the conditions slice

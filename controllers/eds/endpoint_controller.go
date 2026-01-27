@@ -42,6 +42,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -319,88 +321,99 @@ func (r *EndpointReconciler) updateEndpointStatus(ctx context.Context, endpointC
 	}
 	sort.Strings(clustersList)
 
-	// Build conditions
-	conditions := endpointCR.Status.Conditions
-	if conditions == nil {
-		conditions = []metav1.Condition{}
-	}
+	// Use retry to handle conflicts when updating status
+	endpointKey := types.NamespacedName{Name: endpointCR.Name, Namespace: endpointCR.Namespace}
+	generation := endpointCR.Generation
 
-	// Update Ready condition
-	readyCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.EndpointConditionReady,
-		LastTransitionTime: now,
-		ObservedGeneration: endpointCR.Generation,
-	}
-	if active {
-		readyCondition.Status = metav1.ConditionTrue
-		readyCondition.Reason = "Active"
-		readyCondition.Message = fmt.Sprintf("Endpoint is active in %d snapshots with %d endpoints", len(snapshots), endpointCount)
-	} else {
-		readyCondition.Status = metav1.ConditionFalse
-		readyCondition.Reason = "Inactive"
-		readyCondition.Message = message
-	}
-	conditions = updateCondition(conditions, readyCondition)
-
-	// Update Reconciled condition
-	reconciledCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.EndpointConditionReconciled,
-		Status:             metav1.ConditionTrue,
-		LastTransitionTime: now,
-		Reason:             "Reconciled",
-		Message:            "Successfully reconciled",
-		ObservedGeneration: endpointCR.Generation,
-	}
-	conditions = updateCondition(conditions, reconciledCondition)
-
-	// Update Error condition if there's an error
-	if message != "" && !active {
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.EndpointConditionError,
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: now,
-			Reason:             "Error",
-			Message:            message,
-			ObservedGeneration: endpointCR.Generation,
-		}
-		conditions = updateCondition(conditions, errorCondition)
-	} else {
-		// Clear error condition
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.EndpointConditionError,
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: now,
-			Reason:             "NoError",
-			Message:            "",
-			ObservedGeneration: endpointCR.Generation,
-		}
-		conditions = updateCondition(conditions, errorCondition)
-	}
-
-	// Prepare the new status
-	newStatus := envoyxdsv1alpha1.EndpointStatus{
-		Active:             active,
-		EndpointCount:      endpointCount,
-		Snapshots:          snapshots,
-		Nodes:              strings.Join(nodesList, ","),
-		Clusters:           strings.Join(clustersList, ","),
-		LastReconciled:     now,
-		ObservedGeneration: endpointCR.Generation,
-		Conditions:         conditions,
-		Message:            message,
-	}
-
-	// Update status if changed
-	if !endpointStatusEqual(endpointCR.Status, newStatus) {
-		endpointCR.Status = newStatus
-		if err := r.Status().Update(ctx, endpointCR); err != nil {
-			log.Error(err, "unable to update Endpoint status")
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Re-fetch the latest version of the Endpoint to get the current resourceVersion
+		var latestEndpoint envoyxdsv1alpha1.Endpoint
+		if err := r.Get(ctx, endpointKey, &latestEndpoint); err != nil {
 			return err
 		}
-		log.V(2).Info("Updated endpoint status", "active", active, "endpointCount", endpointCount, "nodes", strings.Join(nodesList, ","))
-	}
 
-	return nil
+		// Build conditions from the latest endpoint's conditions
+		conditions := latestEndpoint.Status.Conditions
+		if conditions == nil {
+			conditions = []metav1.Condition{}
+		}
+
+		// Update Ready condition
+		readyCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.EndpointConditionReady,
+			LastTransitionTime: now,
+			ObservedGeneration: generation,
+		}
+		if active {
+			readyCondition.Status = metav1.ConditionTrue
+			readyCondition.Reason = "Active"
+			readyCondition.Message = fmt.Sprintf("Endpoint is active in %d snapshots with %d endpoints", len(snapshots), endpointCount)
+		} else {
+			readyCondition.Status = metav1.ConditionFalse
+			readyCondition.Reason = "Inactive"
+			readyCondition.Message = message
+		}
+		conditions = updateCondition(conditions, readyCondition)
+
+		// Update Reconciled condition
+		reconciledCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.EndpointConditionReconciled,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "Reconciled",
+			Message:            "Successfully reconciled",
+			ObservedGeneration: generation,
+		}
+		conditions = updateCondition(conditions, reconciledCondition)
+
+		// Update Error condition if there's an error
+		if message != "" && !active {
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.EndpointConditionError,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "Error",
+				Message:            message,
+				ObservedGeneration: generation,
+			}
+			conditions = updateCondition(conditions, errorCondition)
+		} else {
+			// Clear error condition
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.EndpointConditionError,
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: now,
+				Reason:             "NoError",
+				Message:            "",
+				ObservedGeneration: generation,
+			}
+			conditions = updateCondition(conditions, errorCondition)
+		}
+
+		// Prepare the new status
+		newStatus := envoyxdsv1alpha1.EndpointStatus{
+			Active:             active,
+			EndpointCount:      endpointCount,
+			Snapshots:          snapshots,
+			Nodes:              strings.Join(nodesList, ","),
+			Clusters:           strings.Join(clustersList, ","),
+			LastReconciled:     now,
+			ObservedGeneration: generation,
+			Conditions:         conditions,
+			Message:            message,
+		}
+
+		// Update status if changed
+		if !endpointStatusEqual(latestEndpoint.Status, newStatus) {
+			latestEndpoint.Status = newStatus
+			if err := r.Status().Update(ctx, &latestEndpoint); err != nil {
+				return err
+			}
+			log.V(2).Info("Updated endpoint status", "active", active, "endpointCount", endpointCount, "nodes", strings.Join(nodesList, ","))
+		}
+
+		return nil
+	})
 }
 
 // updateCondition updates or adds a condition to the conditions slice

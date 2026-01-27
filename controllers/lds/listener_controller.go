@@ -101,6 +101,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -571,88 +572,99 @@ func (r *ListenerReconciler) updateListenerStatus(ctx context.Context, listenerC
 	}
 	sort.Strings(clustersList)
 
-	// Build conditions
-	conditions := listenerCR.Status.Conditions
-	if conditions == nil {
-		conditions = []metav1.Condition{}
-	}
+	// Use retry to handle conflicts when updating status
+	listenerKey := types.NamespacedName{Name: listenerCR.Name, Namespace: listenerCR.Namespace}
+	generation := listenerCR.Generation
 
-	// Update Ready condition
-	readyCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.ListenerConditionReady,
-		LastTransitionTime: now,
-		ObservedGeneration: listenerCR.Generation,
-	}
-	if active {
-		readyCondition.Status = metav1.ConditionTrue
-		readyCondition.Reason = "Active"
-		readyCondition.Message = fmt.Sprintf("Listener is active in %d snapshots", len(snapshots))
-	} else {
-		readyCondition.Status = metav1.ConditionFalse
-		readyCondition.Reason = "Inactive"
-		readyCondition.Message = message
-	}
-	conditions = updateCondition(conditions, readyCondition)
-
-	// Update Reconciled condition
-	reconciledCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.ListenerConditionReconciled,
-		Status:             metav1.ConditionTrue,
-		LastTransitionTime: now,
-		Reason:             "Reconciled",
-		Message:            "Successfully reconciled",
-		ObservedGeneration: listenerCR.Generation,
-	}
-	conditions = updateCondition(conditions, reconciledCondition)
-
-	// Update Error condition if there's an error
-	if message != "" && !active {
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.ListenerConditionError,
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: now,
-			Reason:             "Error",
-			Message:            message,
-			ObservedGeneration: listenerCR.Generation,
-		}
-		conditions = updateCondition(conditions, errorCondition)
-	} else {
-		// Clear error condition
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.ListenerConditionError,
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: now,
-			Reason:             "NoError",
-			Message:            "",
-			ObservedGeneration: listenerCR.Generation,
-		}
-		conditions = updateCondition(conditions, errorCondition)
-	}
-
-	// Prepare the new status
-	newStatus := envoyxdsv1alpha1.ListenerStatus{
-		Active:             active,
-		FilterChainCount:   filterChainCount,
-		Snapshots:          snapshots,
-		Nodes:              strings.Join(nodesList, ","),
-		Clusters:           strings.Join(clustersList, ","),
-		LastReconciled:     now,
-		ObservedGeneration: listenerCR.Generation,
-		Conditions:         conditions,
-		Message:            message,
-	}
-
-	// Update status if changed
-	if !listenerStatusEqual(listenerCR.Status, newStatus) {
-		listenerCR.Status = newStatus
-		if err := r.Status().Update(ctx, listenerCR); err != nil {
-			log.Error(err, "unable to update Listener status")
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Re-fetch the latest version of the Listener to get the current resourceVersion
+		var latestListener envoyxdsv1alpha1.Listener
+		if err := r.Get(ctx, listenerKey, &latestListener); err != nil {
 			return err
 		}
-		log.V(1).Info("Updated listener status", "active", active, "filterChainCount", filterChainCount, "nodes", strings.Join(nodesList, ","))
-	}
 
-	return nil
+		// Build conditions from the latest listener's conditions
+		conditions := latestListener.Status.Conditions
+		if conditions == nil {
+			conditions = []metav1.Condition{}
+		}
+
+		// Update Ready condition
+		readyCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.ListenerConditionReady,
+			LastTransitionTime: now,
+			ObservedGeneration: generation,
+		}
+		if active {
+			readyCondition.Status = metav1.ConditionTrue
+			readyCondition.Reason = "Active"
+			readyCondition.Message = fmt.Sprintf("Listener is active in %d snapshots", len(snapshots))
+		} else {
+			readyCondition.Status = metav1.ConditionFalse
+			readyCondition.Reason = "Inactive"
+			readyCondition.Message = message
+		}
+		conditions = updateCondition(conditions, readyCondition)
+
+		// Update Reconciled condition
+		reconciledCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.ListenerConditionReconciled,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "Reconciled",
+			Message:            "Successfully reconciled",
+			ObservedGeneration: generation,
+		}
+		conditions = updateCondition(conditions, reconciledCondition)
+
+		// Update Error condition if there's an error
+		if message != "" && !active {
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.ListenerConditionError,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "Error",
+				Message:            message,
+				ObservedGeneration: generation,
+			}
+			conditions = updateCondition(conditions, errorCondition)
+		} else {
+			// Clear error condition
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.ListenerConditionError,
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: now,
+				Reason:             "NoError",
+				Message:            "",
+				ObservedGeneration: generation,
+			}
+			conditions = updateCondition(conditions, errorCondition)
+		}
+
+		// Prepare the new status
+		newStatus := envoyxdsv1alpha1.ListenerStatus{
+			Active:             active,
+			FilterChainCount:   filterChainCount,
+			Snapshots:          snapshots,
+			Nodes:              strings.Join(nodesList, ","),
+			Clusters:           strings.Join(clustersList, ","),
+			LastReconciled:     now,
+			ObservedGeneration: generation,
+			Conditions:         conditions,
+			Message:            message,
+		}
+
+		// Update status if changed
+		if !listenerStatusEqual(latestListener.Status, newStatus) {
+			latestListener.Status = newStatus
+			if err := r.Status().Update(ctx, &latestListener); err != nil {
+				return err
+			}
+			log.V(1).Info("Updated listener status", "active", active, "filterChainCount", filterChainCount, "nodes", strings.Join(nodesList, ","))
+		}
+
+		return nil
+	})
 }
 
 // updateCondition updates or adds a condition to the conditions slice

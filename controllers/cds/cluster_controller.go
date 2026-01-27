@@ -69,6 +69,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -488,93 +489,104 @@ func (r *ClusterReconciler) updateClusterStatus(ctx context.Context, clusterCR *
 	}
 	sort.Strings(clustersList)
 
-	// Build conditions
-	conditions := clusterCR.Status.Conditions
-	if conditions == nil {
-		conditions = []metav1.Condition{}
-	}
+	// Use retry to handle conflicts when updating status
+	clusterKey := types.NamespacedName{Name: clusterCR.Name, Namespace: clusterCR.Namespace}
+	generation := clusterCR.Generation
 
-	// Update Ready condition
-	readyCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.ClusterConditionReady,
-		LastTransitionTime: now,
-		ObservedGeneration: clusterCR.Generation,
-	}
-	if active {
-		readyCondition.Status = metav1.ConditionTrue
-		readyCondition.Reason = "Active"
-		if endpointCount > 0 {
-			readyCondition.Message = fmt.Sprintf("Cluster is active in %d snapshots with %d endpoints", len(snapshots), endpointCount)
-		} else {
-			readyCondition.Message = fmt.Sprintf("Cluster is active in %d snapshots", len(snapshots))
-		}
-	} else {
-		readyCondition.Status = metav1.ConditionFalse
-		readyCondition.Reason = "Inactive"
-		readyCondition.Message = message
-	}
-	conditions = updateCondition(conditions, readyCondition)
-
-	// Update Reconciled condition
-	reconciledCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.ClusterConditionReconciled,
-		Status:             metav1.ConditionTrue,
-		LastTransitionTime: now,
-		Reason:             "Reconciled",
-		Message:            "Successfully reconciled",
-		ObservedGeneration: clusterCR.Generation,
-	}
-	conditions = updateCondition(conditions, reconciledCondition)
-
-	// Update Error condition if there's an error
-	if message != "" && !active {
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.ClusterConditionError,
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: now,
-			Reason:             "Error",
-			Message:            message,
-			ObservedGeneration: clusterCR.Generation,
-		}
-		conditions = updateCondition(conditions, errorCondition)
-	} else {
-		// Clear error condition
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.ClusterConditionError,
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: now,
-			Reason:             "NoError",
-			Message:            "",
-			ObservedGeneration: clusterCR.Generation,
-		}
-		conditions = updateCondition(conditions, errorCondition)
-	}
-
-	// Prepare the new status
-	newStatus := envoyxdsv1alpha1.ClusterStatus{
-		Active:              active,
-		EndpointCount:       endpointCount,
-		ReferencedEndpoints: strings.Join(referencedEndpoints, ","),
-		Snapshots:           snapshots,
-		Nodes:               strings.Join(nodesList, ","),
-		Clusters:            strings.Join(clustersList, ","),
-		LastReconciled:      now,
-		ObservedGeneration:  clusterCR.Generation,
-		Conditions:          conditions,
-		Message:             message,
-	}
-
-	// Update status if changed
-	if !clusterStatusEqual(clusterCR.Status, newStatus) {
-		clusterCR.Status = newStatus
-		if err := r.Status().Update(ctx, clusterCR); err != nil {
-			log.Error(err, "unable to update Cluster status")
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Re-fetch the latest version of the Cluster to get the current resourceVersion
+		var latestCluster envoyxdsv1alpha1.Cluster
+		if err := r.Get(ctx, clusterKey, &latestCluster); err != nil {
 			return err
 		}
-		log.V(2).Info("Updated cluster status", "active", active, "endpointCount", endpointCount, "nodes", strings.Join(nodesList, ","))
-	}
 
-	return nil
+		// Build conditions from the latest cluster's conditions
+		conditions := latestCluster.Status.Conditions
+		if conditions == nil {
+			conditions = []metav1.Condition{}
+		}
+
+		// Update Ready condition
+		readyCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.ClusterConditionReady,
+			LastTransitionTime: now,
+			ObservedGeneration: generation,
+		}
+		if active {
+			readyCondition.Status = metav1.ConditionTrue
+			readyCondition.Reason = "Active"
+			if endpointCount > 0 {
+				readyCondition.Message = fmt.Sprintf("Cluster is active in %d snapshots with %d endpoints", len(snapshots), endpointCount)
+			} else {
+				readyCondition.Message = fmt.Sprintf("Cluster is active in %d snapshots", len(snapshots))
+			}
+		} else {
+			readyCondition.Status = metav1.ConditionFalse
+			readyCondition.Reason = "Inactive"
+			readyCondition.Message = message
+		}
+		conditions = updateCondition(conditions, readyCondition)
+
+		// Update Reconciled condition
+		reconciledCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.ClusterConditionReconciled,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "Reconciled",
+			Message:            "Successfully reconciled",
+			ObservedGeneration: generation,
+		}
+		conditions = updateCondition(conditions, reconciledCondition)
+
+		// Update Error condition if there's an error
+		if message != "" && !active {
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.ClusterConditionError,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "Error",
+				Message:            message,
+				ObservedGeneration: generation,
+			}
+			conditions = updateCondition(conditions, errorCondition)
+		} else {
+			// Clear error condition
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.ClusterConditionError,
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: now,
+				Reason:             "NoError",
+				Message:            "",
+				ObservedGeneration: generation,
+			}
+			conditions = updateCondition(conditions, errorCondition)
+		}
+
+		// Prepare the new status
+		newStatus := envoyxdsv1alpha1.ClusterStatus{
+			Active:              active,
+			EndpointCount:       endpointCount,
+			ReferencedEndpoints: strings.Join(referencedEndpoints, ","),
+			Snapshots:           snapshots,
+			Nodes:               strings.Join(nodesList, ","),
+			Clusters:            strings.Join(clustersList, ","),
+			LastReconciled:      now,
+			ObservedGeneration:  generation,
+			Conditions:          conditions,
+			Message:             message,
+		}
+
+		// Update status if changed
+		if !clusterStatusEqual(latestCluster.Status, newStatus) {
+			latestCluster.Status = newStatus
+			if err := r.Status().Update(ctx, &latestCluster); err != nil {
+				return err
+			}
+			log.V(2).Info("Updated cluster status", "active", active, "endpointCount", endpointCount, "nodes", strings.Join(nodesList, ","))
+		}
+
+		return nil
+	})
 }
 
 // updateCondition updates or adds a condition to the conditions slice

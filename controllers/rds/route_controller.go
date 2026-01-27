@@ -93,6 +93,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -819,89 +820,100 @@ func (r *RouteReconciler) updateRouteStatus(ctx context.Context, routeCR *envoyx
 	}
 	sort.Strings(clustersList)
 
-	// Build conditions
-	conditions := routeCR.Status.Conditions
-	if conditions == nil {
-		conditions = []metav1.Condition{}
-	}
+	// Use retry to handle conflicts when updating status
+	routeKey := types.NamespacedName{Name: routeCR.Name, Namespace: routeCR.Namespace}
+	generation := routeCR.Generation
 
-	// Update Ready condition
-	readyCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.RouteConditionReady,
-		LastTransitionTime: now,
-		ObservedGeneration: routeCR.Generation,
-	}
-	if active {
-		readyCondition.Status = metav1.ConditionTrue
-		readyCondition.Reason = "Active"
-		readyCondition.Message = fmt.Sprintf("Route is active in %d snapshots", len(snapshots))
-	} else {
-		readyCondition.Status = metav1.ConditionFalse
-		readyCondition.Reason = "Inactive"
-		readyCondition.Message = message
-	}
-	conditions = updateRouteCondition(conditions, readyCondition)
-
-	// Update Reconciled condition
-	reconciledCondition := metav1.Condition{
-		Type:               envoyxdsv1alpha1.RouteConditionReconciled,
-		Status:             metav1.ConditionTrue,
-		LastTransitionTime: now,
-		Reason:             "Reconciled",
-		Message:            "Successfully reconciled",
-		ObservedGeneration: routeCR.Generation,
-	}
-	conditions = updateRouteCondition(conditions, reconciledCondition)
-
-	// Update Error condition if there's an error
-	if message != "" && !active {
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.RouteConditionError,
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: now,
-			Reason:             "Error",
-			Message:            message,
-			ObservedGeneration: routeCR.Generation,
-		}
-		conditions = updateRouteCondition(conditions, errorCondition)
-	} else {
-		// Clear error condition
-		errorCondition := metav1.Condition{
-			Type:               envoyxdsv1alpha1.RouteConditionError,
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: now,
-			Reason:             "NoError",
-			Message:            "",
-			ObservedGeneration: routeCR.Generation,
-		}
-		conditions = updateRouteCondition(conditions, errorCondition)
-	}
-
-	// Prepare the new status
-	newStatus := envoyxdsv1alpha1.RouteStatus{
-		Active:             active,
-		VirtualHostCount:   virtualHostCount,
-		Listeners:          strings.Join(listeners, ","),
-		Snapshots:          snapshots,
-		Nodes:              strings.Join(nodesList, ","),
-		Clusters:           strings.Join(clustersList, ","),
-		LastReconciled:     now,
-		ObservedGeneration: routeCR.Generation,
-		Conditions:         conditions,
-		Message:            message,
-	}
-
-	// Update status if changed
-	if !routeStatusEqual(routeCR.Status, newStatus) {
-		routeCR.Status = newStatus
-		if err := r.Status().Update(ctx, routeCR); err != nil {
-			log.Error(err, "unable to update Route status")
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Re-fetch the latest version of the Route to get the current resourceVersion
+		var latestRoute envoyxdsv1alpha1.Route
+		if err := r.Get(ctx, routeKey, &latestRoute); err != nil {
 			return err
 		}
-		log.V(2).Info("Updated route status", "active", active, "virtualHosts", virtualHostCount, "nodes", strings.Join(nodesList, ","))
-	}
 
-	return nil
+		// Build conditions from the latest route's conditions
+		conditions := latestRoute.Status.Conditions
+		if conditions == nil {
+			conditions = []metav1.Condition{}
+		}
+
+		// Update Ready condition
+		readyCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.RouteConditionReady,
+			LastTransitionTime: now,
+			ObservedGeneration: generation,
+		}
+		if active {
+			readyCondition.Status = metav1.ConditionTrue
+			readyCondition.Reason = "Active"
+			readyCondition.Message = fmt.Sprintf("Route is active in %d snapshots", len(snapshots))
+		} else {
+			readyCondition.Status = metav1.ConditionFalse
+			readyCondition.Reason = "Inactive"
+			readyCondition.Message = message
+		}
+		conditions = updateRouteCondition(conditions, readyCondition)
+
+		// Update Reconciled condition
+		reconciledCondition := metav1.Condition{
+			Type:               envoyxdsv1alpha1.RouteConditionReconciled,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "Reconciled",
+			Message:            "Successfully reconciled",
+			ObservedGeneration: generation,
+		}
+		conditions = updateRouteCondition(conditions, reconciledCondition)
+
+		// Update Error condition if there's an error
+		if message != "" && !active {
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.RouteConditionError,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: now,
+				Reason:             "Error",
+				Message:            message,
+				ObservedGeneration: generation,
+			}
+			conditions = updateRouteCondition(conditions, errorCondition)
+		} else {
+			// Clear error condition
+			errorCondition := metav1.Condition{
+				Type:               envoyxdsv1alpha1.RouteConditionError,
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: now,
+				Reason:             "NoError",
+				Message:            "",
+				ObservedGeneration: generation,
+			}
+			conditions = updateRouteCondition(conditions, errorCondition)
+		}
+
+		// Prepare the new status
+		newStatus := envoyxdsv1alpha1.RouteStatus{
+			Active:             active,
+			VirtualHostCount:   virtualHostCount,
+			Listeners:          strings.Join(listeners, ","),
+			Snapshots:          snapshots,
+			Nodes:              strings.Join(nodesList, ","),
+			Clusters:           strings.Join(clustersList, ","),
+			LastReconciled:     now,
+			ObservedGeneration: generation,
+			Conditions:         conditions,
+			Message:            message,
+		}
+
+		// Update status if changed
+		if !routeStatusEqual(latestRoute.Status, newStatus) {
+			latestRoute.Status = newStatus
+			if err := r.Status().Update(ctx, &latestRoute); err != nil {
+				return err
+			}
+			log.V(2).Info("Updated route status", "active", active, "virtualHosts", virtualHostCount, "nodes", strings.Join(nodesList, ","))
+		}
+
+		return nil
+	})
 }
 
 // updateRouteCondition updates or adds a condition to the conditions slice
