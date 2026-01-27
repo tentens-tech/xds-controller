@@ -296,6 +296,8 @@ func (r *TLSSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("SDS reconciliation complete", "resources", 0)
 		}
+		// Mark domain configs controller as initialized
+		r.Config.ReconciliationStatus.SetDomainConfigsInitialized(true)
 		return nil
 	})); err != nil {
 		return err

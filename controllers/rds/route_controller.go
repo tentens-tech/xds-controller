@@ -354,6 +354,8 @@ func (r *RouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("RDS reconciliation complete", "resources", 0)
 		}
+		// Mark routes controller as initialized
+		r.Config.ReconciliationStatus.SetRoutesInitialized(true)
 		return nil
 	})); err != nil {
 		return err

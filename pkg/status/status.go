@@ -35,6 +35,13 @@ type ReconciliationStatus struct {
 	hasClusters      atomic.Bool
 	hasEndpoints     atomic.Bool
 	hasDomainConfigs atomic.Bool
+
+	// Track if controllers have completed initialization (cache sync + resource listing)
+	listenersInitialized     atomic.Bool
+	routesInitialized        atomic.Bool
+	clustersInitialized      atomic.Bool
+	endpointsInitialized     atomic.Bool
+	domainConfigsInitialized atomic.Bool
 }
 
 // NewReconciliationStatus creates a new ReconciliationStatus.
@@ -157,6 +164,40 @@ func (rs *ReconciliationStatus) SetHasDomainConfigs(has bool) {
 	}
 }
 
+// SetListenersInitialized marks that the listeners controller has completed initialization
+func (rs *ReconciliationStatus) SetListenersInitialized(initialized bool) {
+	rs.listenersInitialized.Store(initialized)
+}
+
+// SetRoutesInitialized marks that the routes controller has completed initialization
+func (rs *ReconciliationStatus) SetRoutesInitialized(initialized bool) {
+	rs.routesInitialized.Store(initialized)
+}
+
+// SetClustersInitialized marks that the clusters controller has completed initialization
+func (rs *ReconciliationStatus) SetClustersInitialized(initialized bool) {
+	rs.clustersInitialized.Store(initialized)
+}
+
+// SetEndpointsInitialized marks that the endpoints controller has completed initialization
+func (rs *ReconciliationStatus) SetEndpointsInitialized(initialized bool) {
+	rs.endpointsInitialized.Store(initialized)
+}
+
+// SetDomainConfigsInitialized marks that the domain configs controller has completed initialization
+func (rs *ReconciliationStatus) SetDomainConfigsInitialized(initialized bool) {
+	rs.domainConfigsInitialized.Store(initialized)
+}
+
+// AllInitialized checks if all controllers have completed initialization
+func (rs *ReconciliationStatus) AllInitialized() bool {
+	return rs.listenersInitialized.Load() &&
+		rs.routesInitialized.Load() &&
+		rs.clustersInitialized.Load() &&
+		rs.endpointsInitialized.Load() &&
+		rs.domainConfigsInitialized.Load()
+}
+
 // HasAnyResources checks if any resources have been discovered
 func (rs *ReconciliationStatus) HasAnyResources() bool {
 	return rs.hasListeners.Load() ||
@@ -181,6 +222,11 @@ func (rs *ReconciliationStatus) AllReconciledWithSnapshot() bool {
 
 // AllReconciled checks if all components have been reconciled.
 func (rs *ReconciliationStatus) AllReconciled() bool {
+	// First ensure all controllers have completed initialization
+	if !rs.AllInitialized() {
+		return false
+	}
+
 	// For each resource type, either we don't have any OR they've been reconciled
 	listenersOK := !rs.hasListeners.Load() || rs.IsListenersReconciled()
 	routesOK := !rs.hasRoutes.Load() || rs.IsRoutesReconciled()

@@ -376,6 +376,8 @@ func (r *ClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("CDS reconciliation complete", "resources", 0)
 		}
+		// Mark clusters controller as initialized
+		r.Config.ReconciliationStatus.SetClustersInitialized(true)
 		return nil
 	})); err != nil {
 		return err

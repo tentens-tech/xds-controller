@@ -233,6 +233,8 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("EDS reconciliation complete", "resources", 0)
 		}
+		// Mark endpoints controller as initialized
+		r.Config.ReconciliationStatus.SetEndpointsInitialized(true)
 		return nil
 	})); err != nil {
 		return err

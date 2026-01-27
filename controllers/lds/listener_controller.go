@@ -331,6 +331,8 @@ func (r *ListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("LDS reconciliation complete", "resources", 0)
 		}
+		// Mark listeners controller as initialized
+		r.Config.ReconciliationStatus.SetListenersInitialized(true)
 		return nil
 	})); err != nil {
 		return err
