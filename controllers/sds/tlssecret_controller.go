@@ -73,7 +73,8 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	r.Config.ReconciliationStatus.SetDomainConfigsReconciled(false)
+	// Mark that we have domain configs to reconcile (handles dynamically added resources)
+	r.Config.ReconciliationStatus.SetHasDomainConfigs(true)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 
@@ -296,6 +297,8 @@ func (r *TLSSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("SDS reconciliation complete", "resources", 0)
 		}
+		// Mark domain configs controller as initialized
+		r.Config.ReconciliationStatus.SetDomainConfigsInitialized(true)
 		return nil
 	})); err != nil {
 		return err

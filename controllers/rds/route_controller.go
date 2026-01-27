@@ -135,7 +135,8 @@ type RouteReconciler struct {
 func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 
-	r.Config.ReconciliationStatus.SetRoutesReconciled(false)
+	// Mark that we have routes to reconcile (handles dynamically added resources)
+	r.Config.ReconciliationStatus.SetHasRoutes(true)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 
@@ -354,6 +355,8 @@ func (r *RouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("RDS reconciliation complete", "resources", 0)
 		}
+		// Mark routes controller as initialized
+		r.Config.ReconciliationStatus.SetRoutesInitialized(true)
 		return nil
 	})); err != nil {
 		return err

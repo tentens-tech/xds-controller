@@ -80,7 +80,8 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	r.Config.LockConfig()
 	defer r.Config.UnlockConfig()
 
-	r.Config.ReconciliationStatus.SetEndpointsReconciled(false)
+	// Mark that we have endpoints to reconcile (handles dynamically added resources)
+	r.Config.ReconciliationStatus.SetHasEndpoints(true)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 
@@ -233,6 +234,8 @@ func (r *EndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("EDS reconciliation complete", "resources", 0)
 		}
+		// Mark endpoints controller as initialized
+		r.Config.ReconciliationStatus.SetEndpointsInitialized(true)
 		return nil
 	})); err != nil {
 		return err

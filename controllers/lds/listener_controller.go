@@ -140,9 +140,10 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	log := ctrllog.FromContext(ctx)
 	time.Sleep(1 * time.Second)
 
+	r.Config.ReconciliationStatus.SetHasListeners(true)
+
 	// wait for routes and domain configs to be reconciled - requeue only if both are not ready
 	if !r.Config.ReconciliationStatus.IsRoutesReconciled() || !r.Config.ReconciliationStatus.IsDomainConfigsReconciled() {
-		r.Config.ReconciliationStatus.SetListenersReconciled(false)
 		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
 	}
 
@@ -150,8 +151,6 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !r.initialStartLogged.Swap(true) {
 		ctrl.Log.WithName("LDS").Info("LDS reconciliation starting")
 	}
-
-	r.Config.ReconciliationStatus.SetListenersReconciled(false)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 
@@ -331,6 +330,8 @@ func (r *ListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		} else {
 			log.Info("LDS reconciliation complete", "resources", 0)
 		}
+		// Mark listeners controller as initialized
+		r.Config.ReconciliationStatus.SetListenersInitialized(true)
 		return nil
 	})); err != nil {
 		return err
