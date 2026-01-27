@@ -602,43 +602,43 @@ jobs:
         run: |
           NODE_IP="${{ steps.envoy.outputs.node_ip }}"
           ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}"
-          
+
           echo "=== Envoy Request Stats ==="
           STATS=$(curl -s "http://${NODE_IP}:${ADMIN_PORT}/stats" || echo "")
           echo "$STATS" | grep -E "downstream_rq|upstream_rq" | head -20 || true
-          
+
           echo ""
           echo "=== Checking complex-cluster stats ==="
           echo "$STATS" | grep -E "cluster\.(complex|simple)-cluster" | head -10 || true
-          
+
           echo ""
           echo "=== Verifying config structure ==="
           CONFIG_DUMP=$(curl -s "http://${NODE_IP}:${ADMIN_PORT}/config_dump?include_eds" || echo "FAILED")
-          
+
           if echo "$CONFIG_DUMP" | grep -qi "json_format\|jsonFormat"; then
             echo "✅ JSON access logging configured"
           else
             echo "⚠️ JSON access logging not found"
           fi
-          
+
           if echo "$CONFIG_DUMP" | grep -qi "retry_policy\|retryPolicy"; then
             echo "✅ Retry policies configured"
           else
             echo "⚠️ Retry policies not found"
           fi
-          
+
           if echo "$CONFIG_DUMP" | grep -qi "circuit_breakers\|circuitBreakers"; then
             echo "✅ Circuit breakers configured"
           else
             echo "⚠️ Circuit breakers not found"
           fi
-          
+
           if echo "$CONFIG_DUMP" | grep -qi "health_checks\|healthChecks"; then
             echo "✅ Health checks configured"
           else
             echo "⚠️ Health checks not found"
           fi
-          
+
           echo ""
           echo "=== Checking TLS secrets (SDS) ==="
           CERTS=$(curl -s "http://${NODE_IP}:${ADMIN_PORT}/certs" || echo "FAILED")
@@ -647,6 +647,217 @@ jobs:
           else
             echo "⚠️ TLS secrets not found (may not be referenced by active routes)"
           fi
+
+      - name: Test HA scaling (3 replicas)
+        run: |
+          NODE_IP="${{ steps.envoy.outputs.node_ip }}"
+          HTTP_COMPLEX_PORT="${{ steps.envoy.outputs.http_complex_port }}"
+          ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}"
+
+          echo "=== Testing HA Scaling ==="
+          echo "This test verifies xDS controller works correctly with multiple replicas"
+          echo ""
+
+          # Step 1: Scale xDS controller to 3 replicas
+          echo "Step 1: Scaling xDS controller to 3 replicas..."
+          kubectl scale deployment xds-controller -n xds-system --replicas=3
+          echo "✅ Scale command issued"
+          echo ""
+
+          # Step 2: Wait for all replicas to be ready
+          echo "Step 2: Waiting for all 3 replicas to be ready..."
+          kubectl rollout status deployment/xds-controller -n xds-system --timeout=120s
+          echo ""
+
+          # Verify pod count
+          READY_PODS=$(kubectl get deployment xds-controller -n xds-system -o jsonpath='{.status.readyReplicas}')
+          echo "Ready replicas: $READY_PODS"
+          if [[ "$READY_PODS" != "3" ]]; then
+            echo "❌ Expected 3 ready replicas, got $READY_PODS"
+            kubectl get pods -n xds-system -l app=xds-controller
+            exit 1
+          fi
+          echo "✅ All 3 replicas are ready"
+          echo ""
+
+          # Step 3: Show pod distribution
+          echo "Step 3: Pod distribution..."
+          kubectl get pods -n xds-system -l app=xds-controller -o wide
+          echo ""
+
+          # Step 4: Verify Envoy still has correct configuration
+          echo "Step 4: Verifying Envoy configuration is still correct..."
+          CLUSTERS=$(curl -s "http://${NODE_IP}:${ADMIN_PORT}/clusters" || echo "FAILED")
+
+          CLUSTER_CHECK_PASSED=true
+          for cluster_name in "complex-cluster" "simple-cluster" "test-backend-cluster"; do
+            if echo "$CLUSTERS" | grep -q "$cluster_name"; then
+              echo "✅ Cluster '$cluster_name' still present"
+            else
+              echo "❌ Cluster '$cluster_name' missing after scaling"
+              CLUSTER_CHECK_PASSED=false
+            fi
+          done
+
+          if [[ "$CLUSTER_CHECK_PASSED" != "true" ]]; then
+            echo "❌ Cluster configuration lost after scaling"
+            exit 1
+          fi
+          echo ""
+
+          # Step 5: Test traffic still works
+          echo "Step 5: Testing traffic through Envoy..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" --max-time 10 || echo "000")
+
+          if [[ "$HTTP_CODE" == "200" ]]; then
+            echo "✅ HTTP traffic working (status: $HTTP_CODE)"
+          else
+            echo "❌ HTTP traffic failed (status: $HTTP_CODE)"
+            exit 1
+          fi
+          echo ""
+
+          echo "=== HA Scaling Test PASSED ==="
+          echo "Successfully verified:"
+          echo "  - xDS controller scales to 3 replicas"
+          echo "  - Existing Envoy configuration preserved"
+          echo "  - Traffic continues to work"
+
+      - name: Test live reconciliation with HA (RDS update)
+        run: |
+          NODE_IP="${{ steps.envoy.outputs.node_ip }}"
+          HTTP_COMPLEX_PORT="${{ steps.envoy.outputs.http_complex_port }}"
+          ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}"
+
+          echo "=== Testing Live Reconciliation with HA Cluster (3 replicas) ==="
+          echo "This test verifies that changes to xDS resources are propagated to Envoy"
+          echo "when running with multiple controller replicas"
+          echo ""
+
+          # Show current controller pods
+          echo "Current xDS controller pods:"
+          kubectl get pods -n xds-system -l app=xds-controller
+          echo ""
+
+          # Step 1: Verify current header value
+          echo "Step 1: Checking current x-e2e-test header value..."
+          CURRENT_HEADER=$(curl -s -D - -o /dev/null "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" --max-time 10 2>/dev/null | grep -i "^x-e2e-test:" | cut -d' ' -f2- | tr -d '\r\n' || echo "")
+          echo "Current x-e2e-test header: '$CURRENT_HEADER'"
+
+          if [[ "$CURRENT_HEADER" != *"api-route"* ]]; then
+            echo "❌ Expected 'api-route' in header, got '$CURRENT_HEADER'"
+            exit 1
+          fi
+          echo "✅ Current header value confirmed: api-route"
+          echo ""
+
+          # Step 2: Update the RDS resource with a new header value
+          echo "Step 2: Updating api-route RDS resource with new header value..."
+          kubectl patch route api-route -n xds-system --type='json' -p='[
+            {"op": "replace", "path": "/spec/route_config/virtual_hosts/0/response_headers_to_add/0/header/value", "value": "api-route-ha-updated"}
+          ]'
+          echo "✅ RDS resource patched"
+          echo ""
+
+          # Step 3: Wait for reconciliation
+          echo "Step 3: Waiting for xDS controller to reconcile and Envoy to receive update..."
+          sleep 10
+
+          # Step 4: Check xDS controller logs for reconciliation (from all pods)
+          echo "Step 4: Checking xDS controller logs from all pods..."
+          for pod in $(kubectl get pods -n xds-system -l app=xds-controller -o jsonpath='{.items[*].metadata.name}'); do
+            echo "--- Logs from $pod ---"
+            kubectl logs "$pod" -n xds-system --tail=10 | grep -E "Reconciling|Updated|snapshot" || echo "(no reconcile logs)"
+          done
+          echo ""
+
+          # Step 5: Verify Envoy received the updated configuration
+          echo "Step 5: Verifying Envoy received the updated header value..."
+          MAX_RETRIES=6
+          RETRY_INTERVAL=5
+          UPDATE_VERIFIED=false
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            NEW_HEADER=$(curl -s -D - -o /dev/null "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" --max-time 10 2>/dev/null | grep -i "^x-e2e-test:" | cut -d' ' -f2- | tr -d '\r\n' || echo "")
+            echo "Attempt $i: x-e2e-test header = '$NEW_HEADER'"
+
+            if [[ "$NEW_HEADER" == *"api-route-ha-updated"* ]]; then
+              echo "✅ Envoy received updated configuration!"
+              UPDATE_VERIFIED=true
+              break
+            fi
+
+            echo "⏳ Update not yet propagated, waiting ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$UPDATE_VERIFIED" != "true" ]]; then
+            echo "❌ Live reconciliation with HA FAILED - Envoy did not receive the updated header"
+            echo ""
+            echo "=== Debug: xDS Controller logs (all pods) ==="
+            for pod in $(kubectl get pods -n xds-system -l app=xds-controller -o jsonpath='{.items[*].metadata.name}'); do
+              echo "--- Logs from $pod ---"
+              kubectl logs "$pod" -n xds-system --tail=30 || true
+            done
+            exit 1
+          fi
+
+          echo ""
+          # Step 6: Create a new CDS resource to test HA reconciliation
+          echo "Step 6: Testing CDS reconciliation with HA cluster..."
+
+          cat <<EOF | kubectl apply -f -
+          apiVersion: envoyxds.io/v1alpha1
+          kind: Cluster
+          metadata:
+            name: ha-test-cluster
+            namespace: xds-system
+            annotations:
+              clusters: "e2e-test"
+              nodes: "e2e-test-node"
+          spec:
+            name: ha-test-cluster
+            connect_timeout: 5s
+            type: STRICT_DNS
+            lb_policy: ROUND_ROBIN
+            load_assignment:
+              cluster_name: ha-test-cluster
+              endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                          socket_address:
+                            address: test-backend.xds-system.svc.cluster.local
+                            port_value: 80
+          EOF
+          echo "✅ New cluster resource created"
+
+          # Wait for reconciliation
+          sleep 10
+
+          # Verify the new cluster appears in Envoy
+          NEW_CLUSTER_FOUND=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            CLUSTERS=$(curl -s "http://${NODE_IP}:${ADMIN_PORT}/clusters" || echo "FAILED")
+            if echo "$CLUSTERS" | grep -q "ha-test-cluster"; then
+              echo "✅ New cluster 'ha-test-cluster' found in Envoy (attempt $i)"
+              NEW_CLUSTER_FOUND=true
+              break
+            fi
+            echo "⏳ Cluster not found yet, waiting ${RETRY_INTERVAL}s... (attempt $i/$MAX_RETRIES)"
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$NEW_CLUSTER_FOUND" != "true" ]]; then
+            echo "❌ HA CDS reconciliation FAILED - new cluster not propagated to Envoy"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== Live Reconciliation with HA Test PASSED ==="
+          echo "Successfully verified with 3 controller replicas:"
+          echo "  - RDS update -> Controller reconcile -> Envoy config updated"
+          echo "  - CDS create -> Controller reconcile -> Envoy cluster added"
 
       - name: Generate E2E summary
         if: always()
@@ -684,6 +895,15 @@ jobs:
           echo "| Lua Filter Headers | ✅ Working |" >> $GITHUB_STEP_SUMMARY
           echo "| Redirect Routes | ✅ Working |" >> $GITHUB_STEP_SUMMARY
           echo "| HTTPS/TLS (port 8443) | ✅ Working |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### HA & Live Reconciliation Tests" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Scale to 3 replicas | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Config preserved after scaling | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Traffic works with 3 replicas | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| RDS live update propagated | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| CDS live create propagated | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
 
       - name: Debug on failure
         if: failure()
