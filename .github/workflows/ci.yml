@@ -654,6 +654,11 @@ jobs:
           HTTP_COMPLEX_PORT="${{ steps.envoy.outputs.http_complex_port }}"
           ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}"
 
+          # Initialize results as failed (will be updated on success)
+          echo "HA_SCALE_RESULT=❌ Failed" >> "$GITHUB_ENV"
+          echo "HA_CONFIG_RESULT=❌ Failed" >> "$GITHUB_ENV"
+          echo "HA_TRAFFIC_RESULT=❌ Failed" >> "$GITHUB_ENV"
+
           echo "=== Testing HA Scaling ==="
           echo "This test verifies xDS controller works correctly with multiple replicas"
           echo ""
@@ -678,6 +683,7 @@ jobs:
             exit 1
           fi
           echo "✅ All 3 replicas are ready"
+          echo "HA_SCALE_RESULT=✅ Passed" >> "$GITHUB_ENV"
           echo ""
 
           # Step 3: Show pod distribution
@@ -703,6 +709,7 @@ jobs:
             echo "❌ Cluster configuration lost after scaling"
             exit 1
           fi
+          echo "HA_CONFIG_RESULT=✅ Passed" >> "$GITHUB_ENV"
           echo ""
 
           # Step 5: Test traffic still works
@@ -711,6 +718,7 @@ jobs:
 
           if [[ "$HTTP_CODE" == "200" ]]; then
             echo "✅ HTTP traffic working (status: $HTTP_CODE)"
+            echo "HA_TRAFFIC_RESULT=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ HTTP traffic failed (status: $HTTP_CODE)"
             exit 1
@@ -728,6 +736,10 @@ jobs:
           NODE_IP="${{ steps.envoy.outputs.node_ip }}"
           HTTP_COMPLEX_PORT="${{ steps.envoy.outputs.http_complex_port }}"
           ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}"
+
+          # Initialize results as failed (will be updated on success)
+          echo "HA_RDS_RESULT=❌ Failed" >> "$GITHUB_ENV"
+          echo "HA_CDS_RESULT=❌ Failed" >> "$GITHUB_ENV"
 
           echo "=== Testing Live Reconciliation with HA Cluster (3 replicas) ==="
           echo "This test verifies that changes to xDS resources are propagated to Envoy"
@@ -801,6 +813,7 @@ jobs:
             done
             exit 1
           fi
+          echo "HA_RDS_RESULT=✅ Passed" >> "$GITHUB_ENV"
 
           echo ""
           # Step 6: Create a new CDS resource to test HA reconciliation
@@ -852,6 +865,7 @@ jobs:
             echo "❌ HA CDS reconciliation FAILED - new cluster not propagated to Envoy"
             exit 1
           fi
+          echo "HA_CDS_RESULT=✅ Passed" >> "$GITHUB_ENV"
 
           echo ""
           echo "=== Live Reconciliation with HA Test PASSED ==="
@@ -899,11 +913,11 @@ jobs:
           echo "### HA & Live Reconciliation Tests" >> $GITHUB_STEP_SUMMARY
           echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Scale to 3 replicas | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
-          echo "| Config preserved after scaling | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
-          echo "| Traffic works with 3 replicas | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS live update propagated | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
-          echo "| CDS live create propagated | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scale to 3 replicas | ${{ env.HA_SCALE_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Config preserved after scaling | ${{ env.HA_CONFIG_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Traffic works with 3 replicas | ${{ env.HA_TRAFFIC_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| RDS live update propagated | ${{ env.HA_RDS_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CDS live create propagated | ${{ env.HA_CDS_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Debug on failure
         if: failure()
