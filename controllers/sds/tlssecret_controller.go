@@ -73,7 +73,8 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	r.Config.ReconciliationStatus.SetDomainConfigsReconciled(false)
+	// Mark that we have domain configs to reconcile (handles dynamically added resources)
+	r.Config.ReconciliationStatus.SetHasDomainConfigs(true)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 

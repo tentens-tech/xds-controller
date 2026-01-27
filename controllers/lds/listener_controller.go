@@ -151,7 +151,8 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		ctrl.Log.WithName("LDS").Info("LDS reconciliation starting")
 	}
 
-	r.Config.ReconciliationStatus.SetListenersReconciled(false)
+	// Mark that we have listeners to reconcile (handles dynamically added resources)
+	r.Config.ReconciliationStatus.SetHasListeners(true)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 

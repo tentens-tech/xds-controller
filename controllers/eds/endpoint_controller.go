@@ -80,7 +80,8 @@ func (r *EndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	r.Config.LockConfig()
 	defer r.Config.UnlockConfig()
 
-	r.Config.ReconciliationStatus.SetEndpointsReconciled(false)
+	// Mark that we have endpoints to reconcile (handles dynamically added resources)
+	r.Config.ReconciliationStatus.SetHasEndpoints(true)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 

@@ -135,7 +135,8 @@ type RouteReconciler struct {
 func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 
-	r.Config.ReconciliationStatus.SetRoutesReconciled(false)
+	// Mark that we have routes to reconcile (handles dynamically added resources)
+	r.Config.ReconciliationStatus.SetHasRoutes(true)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 

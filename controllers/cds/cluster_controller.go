@@ -110,7 +110,8 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	r.Config.LockConfig()
 	defer r.Config.UnlockConfig()
 
-	r.Config.ReconciliationStatus.SetClustersReconciled(false)
+	// Mark that we have clusters to reconcile (handles dynamically added resources)
+	r.Config.ReconciliationStatus.SetHasClusters(true)
 	r.reconciling.Add(1)
 	r.lastReconcileTime.Store(time.Now().UnixNano())
 
