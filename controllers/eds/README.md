@@ -309,12 +309,13 @@ Benefits of using `endpoint_refs`:
 
 ### When to use cluster_name vs endpoint_refs
 
-| Field | Use Case | Cluster Type |
-|-------|----------|--------------|
+| Field                        | Use Case                                                     | Cluster Type                    |
+| ---------------------------- | ------------------------------------------------------------ | ------------------------------- |
 | `endpoint_refs` (in Cluster) | Reference Endpoint by CR name, merged into `load_assignment` | STATIC, STRICT_DNS, LOGICAL_DNS |
-| `cluster_name` (in Endpoint) | Native Envoy EDS discovery for EDS-type clusters | EDS (with `eds_cluster_config`) |
+| `cluster_name` (in Endpoint) | Native Envoy EDS discovery for EDS-type clusters             | EDS (with `eds_cluster_config`) |
 
 **Using endpoint_refs (recommended):**
+
 ```yaml
 # Endpoint - referenced by name, no cluster_name needed
 apiVersion: envoyxds.io/v1alpha1
@@ -342,6 +343,7 @@ spec:
 ```
 
 **Using cluster_name (native EDS):**
+
 ```yaml
 # Endpoint with cluster_name for EDS discovery
 apiVersion: envoyxds.io/v1alpha1
@@ -381,7 +383,7 @@ The Cluster controller watches for Endpoint changes. When an Endpoint is created
 3. The Cluster reconciler fetches the Endpoint and merges its endpoints into `load_assignment`
 4. The updated Cluster is sent to Envoy
 
-```
+```text
 Endpoint created/updated
         │
         ▼

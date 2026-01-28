@@ -140,14 +140,15 @@ When Endpoint resources are updated, the Cluster is automatically reconciled wit
 
 The `endpoint_refs` mechanism follows the same pattern as `listener_refs` in Routes:
 
-| Pattern | Route + Listener | Cluster + Endpoint |
-|---------|------------------|-------------------|
-| Reference field | `listener_refs` | `endpoint_refs` |
-| Behavior | Route adds filter chain to Listener | Endpoint adds endpoints to Cluster's `load_assignment` |
-| Wait behavior | Listener waits for Routes | Cluster waits for Endpoints |
-| Auto-reconcile | Route change triggers Listener reconcile | Endpoint change triggers Cluster reconcile |
+| Pattern         | Route + Listener                         | Cluster + Endpoint                                     |
+| --------------- | ---------------------------------------- | ------------------------------------------------------ |
+| Reference field | `listener_refs`                          | `endpoint_refs`                                        |
+| Behavior        | Route adds filter chain to Listener      | Endpoint adds endpoints to Cluster's `load_assignment` |
+| Wait behavior   | Listener waits for Routes                | Cluster waits for Endpoints                            |
+| Auto-reconcile  | Route change triggers Listener reconcile | Endpoint change triggers Cluster reconcile             |
 
 **Important behavior:**
+
 - If a Cluster uses `endpoint_refs` only (no inline `load_assignment`) and the referenced Endpoints don't exist yet, the Cluster is **not added to the snapshot**
 - Once the Endpoints are created, they trigger a Cluster re-reconciliation
 - The Cluster is then added to the snapshot with the merged endpoints
@@ -157,11 +158,11 @@ The `endpoint_refs` mechanism follows the same pattern as `listener_refs` in Rou
 
 Choose the appropriate cluster type based on your endpoint addresses:
 
-| Cluster Type | Address Format | Use Case |
-|--------------|---------------|----------|
-| `STATIC` | IP addresses only (e.g., `10.0.1.10`) | Known static IPs |
-| `STRICT_DNS` | DNS hostnames (e.g., `service.namespace.svc`) | Kubernetes services, DNS names |
-| `LOGICAL_DNS` | DNS hostnames | Single host resolution |
+| Cluster Type  | Address Format                                | Use Case                       |
+| ------------- | --------------------------------------------- | ------------------------------ |
+| `STATIC`      | IP addresses only (e.g., `10.0.1.10`)         | Known static IPs               |
+| `STRICT_DNS`  | DNS hostnames (e.g., `service.namespace.svc`) | Kubernetes services, DNS names |
+| `LOGICAL_DNS` | DNS hostnames                                 | Single host resolution         |
 
 ```yaml
 # For IP addresses - use STATIC
