@@ -188,10 +188,15 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	cds.Name = cl.Name
 
+	// Check if cluster has inline load_assignment
+	hasInlineLoadAssignment := cds.LoadAssignment != nil && len(cds.LoadAssignment.Endpoints) > 0
+
 	// Merge endpoints from referenced Endpoint resources
 	endpointCount := 0
 	var referencedEndpoints []string
-	if len(cl.Spec.EndpointRefs) > 0 {
+	hasEndpointRefs := len(cl.Spec.EndpointRefs) > 0
+
+	if hasEndpointRefs {
 		mergedEndpoints, refs, count, err := r.mergeEndpointRefs(ctx, &cl, cds)
 		if err != nil {
 			log.Error(err, "unable to merge endpoint refs")
@@ -201,12 +206,21 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			}
 			return ctrl.Result{}, err
 		}
-		if mergedEndpoints != nil {
+		if mergedEndpoints != nil && len(mergedEndpoints.Endpoints) > 0 {
 			cds.LoadAssignment = mergedEndpoints
 		}
 		referencedEndpoints = refs
 		endpointCount = count
 		log.V(1).Info("Merged endpoints from refs", "count", endpointCount, "refs", referencedEndpoints)
+	}
+
+	if hasEndpointRefs && !hasInlineLoadAssignment && endpointCount == 0 {
+		log.V(0).Info("Cluster uses endpoint_refs but no endpoints found yet, not adding to snapshot", "refs", cl.Spec.EndpointRefs)
+		r.removeClusterFromAllNodes(ctx, cl.Name)
+		if statusErr := r.updateClusterStatus(ctx, &cl, false, nil, 0, nil, "Waiting for endpoint refs to be available"); statusErr != nil {
+			log.Error(statusErr, "unable to update Cluster status")
+		}
+		return ctrl.Result{}, nil
 	}
 
 	for node := range r.Config.ClusterConfigs {
@@ -348,6 +362,27 @@ func EndpointRecast(e edstypes.EDS) (*endpoint.ClusterLoadAssignment, error) {
 	}
 
 	return cla, nil
+}
+
+// removeClusterFromAllNodes removes a cluster from all nodes in the config
+func (r *ClusterReconciler) removeClusterFromAllNodes(ctx context.Context, clusterName string) {
+	log := ctrllog.FromContext(ctx)
+	var removed bool
+
+	for nodeID := range r.Config.ClusterConfigs {
+		for i := len(r.Config.ClusterConfigs[nodeID]) - 1; i >= 0; i-- {
+			c := r.Config.ClusterConfigs[nodeID][i]
+			if c.Name == clusterName {
+				r.Config.ClusterConfigs[nodeID] = append(r.Config.ClusterConfigs[nodeID][:i], r.Config.ClusterConfigs[nodeID][i+1:]...)
+				removed = true
+				r.Config.IncrementConfigCounter()
+			}
+		}
+	}
+
+	if removed {
+		log.V(0).Info("Removed cluster from snapshot (waiting for endpoints)", "cluster", clusterName)
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

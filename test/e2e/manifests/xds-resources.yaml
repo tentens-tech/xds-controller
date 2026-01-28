@@ -124,7 +124,7 @@ metadata:
     nodes: "e2e-test-node"
 spec:
   connect_timeout: 5s
-  type: STATIC
+  type: STRICT_DNS
   lb_policy: ROUND_ROBIN
   endpoint_refs:
     - eds-test-endpoints
