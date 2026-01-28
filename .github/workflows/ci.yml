@@ -373,24 +373,34 @@ jobs:
           HTTP_PORT=$(kubectl get svc envoy -n xds-system -o jsonpath='{.spec.ports[?(@.name=="http")].nodePort}')
           HTTP_COMPLEX_PORT=$(kubectl get svc envoy -n xds-system -o jsonpath='{.spec.ports[?(@.name=="http-complex")].nodePort}')
           HTTPS_PORT=$(kubectl get svc envoy -n xds-system -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}')
+          TCP_COMPLEX_PORT=$(kubectl get svc envoy -n xds-system -o jsonpath='{.spec.ports[?(@.name=="tcp-complex")].nodePort}')
+          TCP_BASIC_PORT=$(kubectl get svc envoy -n xds-system -o jsonpath='{.spec.ports[?(@.name=="tcp-basic")].nodePort}')
           echo "node_ip=$NODE_IP" >> $GITHUB_OUTPUT
           echo "admin_port=$ADMIN_PORT" >> $GITHUB_OUTPUT
           echo "http_port=$HTTP_PORT" >> $GITHUB_OUTPUT
           echo "http_complex_port=$HTTP_COMPLEX_PORT" >> $GITHUB_OUTPUT
           echo "https_port=$HTTPS_PORT" >> $GITHUB_OUTPUT
+          echo "tcp_complex_port=$TCP_COMPLEX_PORT" >> $GITHUB_OUTPUT
+          echo "tcp_basic_port=$TCP_BASIC_PORT" >> $GITHUB_OUTPUT
           echo "Envoy Admin: http://${NODE_IP}:${ADMIN_PORT}"
           echo "Envoy HTTP (basic): http://${NODE_IP}:${HTTP_PORT}"
           echo "Envoy HTTP (complex): http://${NODE_IP}:${HTTP_COMPLEX_PORT}"
           echo "Envoy HTTPS: https://${NODE_IP}:${HTTPS_PORT}"
+          echo "Envoy TCP (complex): tcp://${NODE_IP}:${TCP_COMPLEX_PORT}"
+          echo "Envoy TCP (basic): tcp://${NODE_IP}:${TCP_BASIC_PORT}"
 
       - name: Verify Envoy received xDS configuration
         run: |
           NODE_IP="${{ steps.envoy.outputs.node_ip }}"
           ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}"
-          
+
           MAX_RETRIES=12
           RETRY_INTERVAL=5
-          
+
+          # Initialize xDS verification results as failed
+          echo "XDS_CDS_RESULT=❌ Failed" >> "$GITHUB_ENV"
+          echo "XDS_LDS_RESULT=❌ Failed" >> "$GITHUB_ENV"
+
           echo "=== Checking Envoy Clusters (with retry) ==="
           CLUSTER_FOUND=false
           for i in $(seq 1 $MAX_RETRIES); do
@@ -412,17 +422,27 @@ jobs:
             exit 1
           fi
           
-          # Verify all expected clusters
+          # Verify all expected clusters (MUST all be present)
           echo ""
           echo "Verifying all expected clusters..."
+          CLUSTER_ERRORS=0
           for cluster_name in "complex-cluster" "simple-cluster" "tcp-cluster" "test-backend-cluster" "tcp-backend-cluster" "eds-test-cluster"; do
             if echo "$CLUSTERS" | grep -q "$cluster_name"; then
               echo "✅ Cluster '$cluster_name' found"
             else
-              echo "⚠️ Cluster '$cluster_name' not found"
+              echo "❌ Cluster '$cluster_name' NOT found"
+              ((CLUSTER_ERRORS++))
             fi
           done
-          
+
+          if [[ $CLUSTER_ERRORS -gt 0 ]]; then
+            echo ""
+            echo "❌ $CLUSTER_ERRORS cluster(s) missing from Envoy configuration"
+            exit 1
+          fi
+
+          echo "XDS_CDS_RESULT=✅ Passed" >> "$GITHUB_ENV"
+
           echo ""
           echo "=== Checking Envoy Listeners (with retry) ==="
           LISTENER_FOUND=false
@@ -445,17 +465,26 @@ jobs:
             exit 1
           fi
           
-          # Verify all expected listeners
+          # Verify all expected listeners (MUST all be present)
           echo ""
           echo "Verifying all expected listeners..."
-          for listener_addr in "0.0.0.0:8080" "0.0.0.0:8081" "0.0.0.0:8443" "0.0.0.0:8444" "0.0.0.0:9000"; do
+          LISTENER_ERRORS=0
+          for listener_addr in "0.0.0.0:8080" "0.0.0.0:8081" "0.0.0.0:8443" "0.0.0.0:8444" "0.0.0.0:9000" "0.0.0.0:9001"; do
             if echo "$LISTENERS" | grep -q "$listener_addr"; then
               echo "✅ Listener on $listener_addr found"
             else
-              echo "⚠️ Listener on $listener_addr not found"
+              echo "❌ Listener on $listener_addr NOT found"
+              ((LISTENER_ERRORS++))
             fi
           done
-          
+
+          if [[ $LISTENER_ERRORS -gt 0 ]]; then
+            echo ""
+            echo "❌ $LISTENER_ERRORS listener(s) missing from Envoy configuration"
+            exit 1
+          fi
+
+          echo "XDS_LDS_RESULT=✅ Passed" >> "$GITHUB_ENV"
 
       - name: Test HTTP traffic through Envoy
         run: |
@@ -463,10 +492,22 @@ jobs:
           HTTP_PORT="${{ steps.envoy.outputs.http_port }}"
           HTTP_COMPLEX_PORT="${{ steps.envoy.outputs.http_complex_port }}"
           HTTPS_PORT="${{ steps.envoy.outputs.https_port }}"
-          
+
           MAX_RETRIES=6
           RETRY_INTERVAL=5
           TEST_FAILURES=0
+
+          # Initialize all test results as failed (will be updated on success)
+          echo "TEST_BASIC_HTTP=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_COMPLEX_HTTP=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_API_ROUTE=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_HEALTH=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_CORS=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_LUA=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_REDIRECT=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_HTTPS=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_TCP_COMPLEX=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_TCP_BASIC=❌ Failed" >> "$GITHUB_ENV"
           
           # Helper function to test HTTP request
           test_http() {
@@ -517,27 +558,41 @@ jobs:
             echo "⏳ Retrying in ${RETRY_INTERVAL}s... (attempt $i/$MAX_RETRIES)"
             sleep $RETRY_INTERVAL
           done
-          
-          if [[ "$REQUEST_SUCCESS" != "true" ]]; then
+
+          if [[ "$REQUEST_SUCCESS" == "true" ]]; then
+            echo "TEST_BASIC_HTTP=✅ Passed" >> "$GITHUB_ENV"
+          else
             echo "❌ Basic HTTP request failed after $MAX_RETRIES attempts"
             kubectl logs -l app=envoy -n xds-system --tail=50 || true
             exit 1
           fi
-          
+
           echo ""
           echo "=== Test 2: Complex route (port 8081) ==="
-          test_http "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" "200" "Complex route on port 8081" || ((TEST_FAILURES++))
-          test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" "x-e2e-test" "api-route" "Response header x-e2e-test" || ((TEST_FAILURES++))
-          
+          if test_http "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" "200" "Complex route on port 8081" && \
+             test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" "x-e2e-test" "api-route" "Response header x-e2e-test"; then
+            echo "TEST_COMPLEX_HTTP=✅ Passed" >> "$GITHUB_ENV"
+          else
+            ((TEST_FAILURES++))
+          fi
+
           echo ""
           echo "=== Test 3: API route (/api/) ==="
-          test_http "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/api/" "200" "API route (/api/)" || ((TEST_FAILURES++))
-          test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/api/" "x-e2e-test" "api-route" "API route response header" || ((TEST_FAILURES++))
-          
+          if test_http "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/api/" "200" "API route (/api/)" && \
+             test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/api/" "x-e2e-test" "api-route" "API route response header"; then
+            echo "TEST_API_ROUTE=✅ Passed" >> "$GITHUB_ENV"
+          else
+            ((TEST_FAILURES++))
+          fi
+
           echo ""
           echo "=== Test 4: Health endpoint ==="
-          test_http "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/health" "200" "Health endpoint (/health)" || ((TEST_FAILURES++))
-          
+          if test_http "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/health" "200" "Health endpoint (/health)"; then
+            echo "TEST_HEALTH=✅ Passed" >> "$GITHUB_ENV"
+          else
+            ((TEST_FAILURES++))
+          fi
+
           echo ""
           echo "=== Test 5: CORS preflight ==="
           CORS_RESPONSE=$(curl -s -D - -o /dev/null -X OPTIONS \
@@ -545,44 +600,81 @@ jobs:
             -H "Access-Control-Request-Method: POST" \
             -H "Access-Control-Request-Headers: X-Custom-Header" \
             "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/api/" --max-time 10 2>/dev/null || echo "")
-          
+
           if echo "$CORS_RESPONSE" | grep -qi "access-control-allow"; then
             echo "✅ CORS headers present in preflight response"
+            echo "TEST_CORS=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ CORS headers not found in preflight response"
             ((TEST_FAILURES++))
           fi
-          
+
           echo ""
           echo "=== Test 6: Lua filter response header ==="
-          test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" "x-lua-response" "processed" "Lua filter response header" || ((TEST_FAILURES++))
-          
+          if test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" "x-lua-response" "processed" "Lua filter response header"; then
+            echo "TEST_LUA=✅ Passed" >> "$GITHUB_ENV"
+          else
+            ((TEST_FAILURES++))
+          fi
+
           echo ""
           echo "=== Test 7: Redirect path ==="
           REDIRECT_RESPONSE=$(curl -s -D - -o /dev/null "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/old/path" --max-time 10 2>/dev/null || echo "")
-          
+
           if echo "$REDIRECT_RESPONSE" | grep -q "301\|Location"; then
             echo "✅ Redirect working (301 response)"
+            echo "TEST_REDIRECT=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ Redirect path not matched"
             ((TEST_FAILURES++))
           fi
-          
+
           echo ""
           echo "=== Test 8: HTTPS route (with self-signed cert) ==="
           HTTPS_CODE=$(curl -s -k -o /dev/null -w "%{http_code}" \
             -H "Host: secure.e2e.local" \
             "https://${NODE_IP}:${HTTPS_PORT}/" --max-time 15 2>/dev/null || echo "000")
-          
+
           if [[ "$HTTPS_CODE" == "200" ]]; then
             echo "✅ HTTPS route with TLS responded successfully (status: $HTTPS_CODE)"
+            echo "TEST_HTTPS=✅ Passed" >> "$GITHUB_ENV"
           elif [[ "$HTTPS_CODE" != "000" ]]; then
             echo "✅ HTTPS/TLS connection established (status: $HTTPS_CODE)"
+            echo "TEST_HTTPS=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ HTTPS route connection failed"
             ((TEST_FAILURES++))
           fi
-          
+
+          echo ""
+          echo "=== Test 9: TCP proxy (complex - port 9000) ==="
+          TCP_COMPLEX_PORT="${{ steps.envoy.outputs.tcp_complex_port }}"
+          # TCP proxy forwards to test-backend (HTTP server), so we can test with HTTP request
+          TCP_COMPLEX_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "http://${NODE_IP}:${TCP_COMPLEX_PORT}/" --max-time 10 2>/dev/null || echo "000")
+
+          if [[ "$TCP_COMPLEX_CODE" == "200" ]]; then
+            echo "✅ TCP proxy (complex) forwarding works (status: $TCP_COMPLEX_CODE)"
+            echo "TEST_TCP_COMPLEX=✅ Passed" >> "$GITHUB_ENV"
+          else
+            echo "❌ TCP proxy (complex) failed (status: $TCP_COMPLEX_CODE)"
+            ((TEST_FAILURES++))
+          fi
+
+          echo ""
+          echo "=== Test 10: TCP proxy (basic - port 9001) ==="
+          TCP_BASIC_PORT="${{ steps.envoy.outputs.tcp_basic_port }}"
+          TCP_BASIC_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "http://${NODE_IP}:${TCP_BASIC_PORT}/" --max-time 10 2>/dev/null || echo "000")
+
+          if [[ "$TCP_BASIC_CODE" == "200" ]]; then
+            echo "✅ TCP proxy (basic) forwarding works (status: $TCP_BASIC_CODE)"
+            echo "TEST_TCP_BASIC=✅ Passed" >> "$GITHUB_ENV"
+          else
+            echo "❌ TCP proxy (basic) failed (status: $TCP_BASIC_CODE)"
+            ((TEST_FAILURES++))
+          fi
+
           echo ""
           echo "=== Traffic Test Summary ==="
           if [[ $TEST_FAILURES -eq 0 ]]; then
@@ -885,30 +977,25 @@ jobs:
           echo "| xDS Controller | ✅ Deployed |" >> $GITHUB_STEP_SUMMARY
           echo "| Envoy Proxy | ✅ Running |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### xDS Configuration (Complex)" >> $GITHUB_STEP_SUMMARY
+          echo "### xDS Configuration" >> $GITHUB_STEP_SUMMARY
           echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| CDS - Basic Clusters | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          echo "| CDS - Complex Clusters (health checks, circuit breakers) | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          echo "| LDS - HTTP Listeners (8080, 8081) | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          echo "| LDS - HTTPS/TLS Listener (8443) | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          echo "| LDS - TCP Proxy Listener (9000) | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS - Routes with CORS | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          echo "| RDS - Routes with Retry Policies | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          echo "| SDS - TLS Secrets | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
-          echo "| EDS - Endpoint Discovery | ✅ Configured |" >> $GITHUB_STEP_SUMMARY
+          echo "| CDS - All Clusters (6 total) | ${{ env.XDS_CDS_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| LDS - All Listeners (6 total) | ${{ env.XDS_LDS_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Traffic Tests" >> $GITHUB_STEP_SUMMARY
           echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Basic HTTP (port 8080) | ✅ Working |" >> $GITHUB_STEP_SUMMARY
-          echo "| Complex HTTP (port 8081) | ✅ Working |" >> $GITHUB_STEP_SUMMARY
-          echo "| API Route (/api/) | ✅ Working |" >> $GITHUB_STEP_SUMMARY
-          echo "| Health Endpoint | ✅ Working |" >> $GITHUB_STEP_SUMMARY
-          echo "| CORS Preflight | ✅ Working |" >> $GITHUB_STEP_SUMMARY
-          echo "| Lua Filter Headers | ✅ Working |" >> $GITHUB_STEP_SUMMARY
-          echo "| Redirect Routes | ✅ Working |" >> $GITHUB_STEP_SUMMARY
-          echo "| HTTPS/TLS (port 8443) | ✅ Working |" >> $GITHUB_STEP_SUMMARY
+          echo "| Basic HTTP (port 8080) | ${{ env.TEST_BASIC_HTTP || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Complex HTTP (port 8081) | ${{ env.TEST_COMPLEX_HTTP || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| API Route (/api/) | ${{ env.TEST_API_ROUTE || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Health Endpoint | ${{ env.TEST_HEALTH || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CORS Preflight | ${{ env.TEST_CORS || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lua Filter Headers | ${{ env.TEST_LUA || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Redirect Routes | ${{ env.TEST_REDIRECT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| HTTPS/TLS (port 8443) | ${{ env.TEST_HTTPS || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| TCP Proxy Complex (port 9000) | ${{ env.TEST_TCP_COMPLEX || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| TCP Proxy Basic (port 9001) | ${{ env.TEST_TCP_BASIC || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### HA & Live Reconciliation Tests" >> $GITHUB_STEP_SUMMARY
           echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY

@@ -90,7 +90,9 @@ spec:
               name: quic
               protocol: UDP
             - containerPort: 9000
-              name: tcp-proxy
+              name: tcp-complex
+            - containerPort: 9001
+              name: tcp-basic
             - containerPort: 9901
               name: admin
           volumeMounts:
@@ -146,12 +148,16 @@ spec:
       targetPort: 8444
       nodePort: 30444
       protocol: UDP
-    - name: tcp-proxy
+    - name: tcp-complex
       port: 9000
       targetPort: 9000
       nodePort: 30900
+    - name: tcp-basic
+      port: 9001
+      targetPort: 9001
+      nodePort: 30901
     - name: admin
       port: 9901
       targetPort: 9901
-      nodePort: 30901
+      nodePort: 30902
 
