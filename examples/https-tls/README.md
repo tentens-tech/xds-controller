@@ -221,6 +221,5 @@ For production deployments with real certificates:
 
 ## Next Steps
 
-- [QUIC/HTTP3](../quic-http3/) - Add HTTP/3 support
 - [Advanced](../advanced/) - CORS, compression, and more
 - [Multi-Environment](../multi-environment/) - Production/staging configurations

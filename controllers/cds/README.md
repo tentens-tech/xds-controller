@@ -78,6 +78,7 @@ Instead of defining endpoints inline in the cluster's `load_assignment`, you can
 - **Decoupled management**: Endpoints can be defined once and reused by multiple clusters
 - **Dynamic updates**: Update endpoints without modifying cluster configuration
 - **Cleaner organization**: Separate endpoint pools by zone, environment, or purpose
+- **Automatic waiting**: Cluster is not added to snapshot until referenced Endpoints exist (similar to Listener + Route pattern)
 
 ```yaml
 # First, create Endpoint resources
@@ -129,11 +130,78 @@ spec:
     - backend-zone-a
     - backend-zone-b
   connect_timeout: 0.25s
-  type: STATIC
+  type: STRICT_DNS  # Use STRICT_DNS for DNS hostnames, STATIC for IP addresses
   lb_policy: ROUND_ROBIN
 ```
 
 When Endpoint resources are updated, the Cluster is automatically reconciled with the new endpoints.
+
+#### How endpoint_refs Works
+
+The `endpoint_refs` mechanism follows the same pattern as `listener_refs` in Routes:
+
+| Pattern         | Route + Listener                         | Cluster + Endpoint                                     |
+| --------------- | ---------------------------------------- | ------------------------------------------------------ |
+| Reference field | `listener_refs`                          | `endpoint_refs`                                        |
+| Behavior        | Route adds filter chain to Listener      | Endpoint adds endpoints to Cluster's `load_assignment` |
+| Wait behavior   | Listener waits for Routes                | Cluster waits for Endpoints                            |
+| Auto-reconcile  | Route change triggers Listener reconcile | Endpoint change triggers Cluster reconcile             |
+
+**Important behavior:**
+
+- If a Cluster uses `endpoint_refs` only (no inline `load_assignment`) and the referenced Endpoints don't exist yet, the Cluster is **not added to the snapshot**
+- Once the Endpoints are created, they trigger a Cluster re-reconciliation
+- The Cluster is then added to the snapshot with the merged endpoints
+- This prevents Envoy from receiving invalid clusters without endpoints
+
+#### Cluster Types for endpoint_refs
+
+Choose the appropriate cluster type based on your endpoint addresses:
+
+| Cluster Type  | Address Format                                | Use Case                       |
+| ------------- | --------------------------------------------- | ------------------------------ |
+| `STATIC`      | IP addresses only (e.g., `10.0.1.10`)         | Known static IPs               |
+| `STRICT_DNS`  | DNS hostnames (e.g., `service.namespace.svc`) | Kubernetes services, DNS names |
+| `LOGICAL_DNS` | DNS hostnames                                 | Single host resolution         |
+
+```yaml
+# For IP addresses - use STATIC
+spec:
+  type: STATIC
+  endpoint_refs:
+    - endpoints-with-ips
+
+# For DNS hostnames - use STRICT_DNS
+spec:
+  type: STRICT_DNS
+  endpoint_refs:
+    - endpoints-with-dns-names
+```
+
+#### Combining inline load_assignment with endpoint_refs
+
+You can combine inline `load_assignment` with `endpoint_refs`. The inline endpoints serve as a base, and referenced endpoints are merged:
+
+```yaml
+spec:
+  type: STRICT_DNS
+  # Base endpoints (always present)
+  load_assignment:
+    cluster_name: backend-service
+    endpoints:
+      - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: fallback.example.com
+                  port_value: 8080
+  # Additional endpoints merged from Endpoint CRs
+  endpoint_refs:
+    - dynamic-endpoints-zone-a
+    - dynamic-endpoints-zone-b
+```
+
+This pattern is useful when you want a fallback endpoint that's always available.
 
 ### Advanced Configuration Examples
 

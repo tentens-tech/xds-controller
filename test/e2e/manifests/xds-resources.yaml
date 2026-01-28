@@ -27,7 +27,7 @@ spec:
   address:
     socket_address:
       address: 0.0.0.0
-      port_value: 9000
+      port_value: 9001
   filter_chains:
     - filters:
         - name: envoy.filters.network.tcp_proxy
@@ -113,7 +113,7 @@ spec:
                   address: test-backend.xds-system.svc.cluster.local
                   port_value: 80
 ---
-# EDS cluster for testing endpoint_refs feature
+# Cluster for testing endpoint_refs feature
 apiVersion: envoyxds.io/v1alpha1
 kind: Cluster
 metadata:
@@ -124,12 +124,12 @@ metadata:
     nodes: "e2e-test-node"
 spec:
   connect_timeout: 5s
-  type: EDS
+  type: STRICT_DNS
   lb_policy: ROUND_ROBIN
   endpoint_refs:
     - eds-test-endpoints
 ---
-# Endpoint resource for EDS testing
+# Endpoint resource for endpoint_refs testing
 apiVersion: envoyxds.io/v1alpha1
 kind: Endpoint
 metadata:
@@ -139,7 +139,7 @@ metadata:
     clusters: "e2e-test"
     nodes: "e2e-test-node"
 spec:
-  cluster_name: eds-test-cluster
+  # Referenced by eds-test-cluster via endpoint_refs
   endpoints:
     - lb_endpoints:
         - endpoint:

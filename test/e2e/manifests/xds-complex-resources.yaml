@@ -238,6 +238,8 @@ spec:
     - http-complex
   stat_prefix: api-route
   use_remote_address: true
+  internal_address_config:
+    unix_sockets: true
   generate_request_id: true
   codec_type: AUTO
   common_http_protocol_options:
@@ -248,14 +250,16 @@ spec:
       - name: api_host
         domains:
           - "*"
-        cors:
-          allow_credentials: true
-          allow_origin_string_match:
-            - safe_regex:
-                regex: ".*"
-          allow_methods: GET,POST,PUT,DELETE,OPTIONS,HEAD
-          allow_headers: Authorization,Content-Type,X-Requested-With,Accept,Origin,X-Custom-Header
-          max_age: 24h
+        typed_per_filter_config:
+          envoy.filters.http.cors:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
+            allow_credentials: true
+            allow_origin_string_match:
+              - safe_regex:
+                  regex: ".*"
+            allow_methods: GET,POST,PUT,DELETE,OPTIONS,HEAD
+            allow_headers: Authorization,Content-Type,X-Requested-With,Accept,Origin,X-Custom-Header
+            max_age: 24h
         response_headers_to_add:
           - header:
               key: x-e2e-test
@@ -287,7 +291,8 @@ spec:
               prefix: /grpc/
               headers:
                 - name: content-type
-                  prefix_match: "application/grpc"
+                  string_match:
+                    prefix: "application/grpc"
             route:
               prefix_rewrite: /
               timeout: 30s
@@ -364,13 +369,14 @@ spec:
     - name: envoy.filters.http.lua
       typed_config:
         "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
-        inline_code: |
-          function envoy_on_request(request_handle)
-            request_handle:headers():add("x-lua-processed", "true")
-          end
-          function envoy_on_response(response_handle)
-            response_handle:headers():add("x-lua-response", "processed")
-          end
+        default_source_code:
+          inline_string: |
+            function envoy_on_request(request_handle)
+              request_handle:headers():add("x-lua-processed", "true")
+            end
+            function envoy_on_response(response_handle)
+              response_handle:headers():add("x-lua-response", "processed")
+            end
     - name: envoy.filters.http.router
       typed_config:
         "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -395,6 +401,8 @@ spec:
       - secure.e2e.local
   stat_prefix: https-route
   use_remote_address: true
+  internal_address_config:
+    unix_sockets: true
   codec_type: AUTO
   route_config:
     name: https_route_config

@@ -24,7 +24,6 @@ jobs:
         with:
           globs: '**/*.md'
           config: '.markdownlint.json'
-        continue-on-error: true
 
   link-check:
     name: Check Links
@@ -37,5 +36,5 @@ jobs:
         uses: lycheeverse/lychee-action@v2
         with:
           args: --verbose --no-progress '**/*.md'
-          fail: false
+          fail: true
 

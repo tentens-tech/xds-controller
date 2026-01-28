@@ -258,19 +258,23 @@ EDS works in conjunction with CDS (Cluster Discovery Service). There are three w
 
 1. **Inline in CDS**: Define endpoints directly in the Cluster's `load_assignment` field
 2. **Reference from CDS**: Use `endpoint_refs` in Cluster to reference Endpoint CRs (recommended)
-3. **Standalone EDS**: Use the native Envoy `cluster_name` field for EDS discovery
+3. **Standalone EDS**: Use the native Envoy `cluster_name` field for EDS discovery (for EDS-type clusters)
 
 ### Using endpoint_refs (Recommended)
 
 The recommended approach is to create Endpoint resources and reference them from Clusters using `endpoint_refs`:
 
 ```yaml
-# Endpoint resource (reusable)
+# Endpoint resource (reusable) - no cluster_name needed when using endpoint_refs
 apiVersion: envoyxds.io/v1alpha1
 kind: Endpoint
 metadata:
   name: backend-zone-a
+  annotations:
+    clusters: "production"
+    nodes: "01,02"
 spec:
+  # Note: cluster_name is NOT needed when referenced via endpoint_refs
   endpoints:
     - locality:
         zone: us-east-1a
@@ -281,7 +285,7 @@ spec:
                 address: 10.0.1.10
                 port_value: 8080
 ---
-# Cluster references the Endpoint
+# Cluster references the Endpoint by name
 apiVersion: envoyxds.io/v1alpha1
 kind: Cluster
 metadata:
@@ -291,7 +295,7 @@ spec:
     - backend-zone-a
     - backend-zone-b  # Can reference multiple endpoints
   connect_timeout: 0.25s
-  type: STATIC
+  type: STRICT_DNS  # Use STRICT_DNS for DNS names, STATIC for IPs
   lb_policy: ROUND_ROBIN
 ```
 
@@ -301,6 +305,118 @@ Benefits of using `endpoint_refs`:
 - **Reusable endpoints**: Same Endpoint resource can be used by multiple clusters
 - **Automatic reconciliation**: When an Endpoint changes, all referencing Clusters are updated
 - **Consistent API**: Same pattern as `listener_refs` in Route
+- **Automatic waiting**: Cluster waits for Endpoints to exist before being added to snapshot
+
+### When to use cluster_name vs endpoint_refs
+
+| Field                        | Use Case                                                     | Cluster Type                    |
+| ---------------------------- | ------------------------------------------------------------ | ------------------------------- |
+| `endpoint_refs` (in Cluster) | Reference Endpoint by CR name, merged into `load_assignment` | STATIC, STRICT_DNS, LOGICAL_DNS |
+| `cluster_name` (in Endpoint) | Native Envoy EDS discovery for EDS-type clusters             | EDS (with `eds_cluster_config`) |
+
+**Using endpoint_refs (recommended):**
+
+```yaml
+# Endpoint - referenced by name, no cluster_name needed
+apiVersion: envoyxds.io/v1alpha1
+kind: Endpoint
+metadata:
+  name: my-endpoints  # This name is used in endpoint_refs
+spec:
+  endpoints:
+    - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: backend.svc.cluster.local
+                port_value: 8080
+---
+# Cluster references Endpoint by name
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: my-cluster
+spec:
+  type: STRICT_DNS
+  endpoint_refs:
+    - my-endpoints  # References the Endpoint CR name
+```
+
+**Using cluster_name (native EDS):**
+
+```yaml
+# Endpoint with cluster_name for EDS discovery
+apiVersion: envoyxds.io/v1alpha1
+kind: Endpoint
+metadata:
+  name: my-endpoints
+spec:
+  cluster_name: my-eds-cluster  # Must match Cluster's EDS service name
+  endpoints:
+    - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 10.0.1.10
+                port_value: 8080
+---
+# EDS-type Cluster
+apiVersion: envoyxds.io/v1alpha1
+kind: Cluster
+metadata:
+  name: my-eds-cluster
+spec:
+  type: EDS
+  eds_cluster_config:
+    eds_config:
+      ads: {}
+      resource_api_version: V3
+    service_name: my-eds-cluster  # Must match Endpoint's cluster_name
+```
+
+### How endpoint_refs Triggers Reconciliation
+
+The Cluster controller watches for Endpoint changes. When an Endpoint is created or updated:
+
+1. The watch handler finds all Clusters that reference this Endpoint via `endpoint_refs`
+2. Those Clusters are queued for reconciliation
+3. The Cluster reconciler fetches the Endpoint and merges its endpoints into `load_assignment`
+4. The updated Cluster is sent to Envoy
+
+```text
+Endpoint created/updated
+        │
+        ▼
+┌───────────────────┐
+│ Cluster Watch     │
+│ handler triggered │
+└───────────────────┘
+        │
+        ▼
+┌───────────────────┐
+│ Find Clusters     │
+│ with endpoint_refs│
+│ matching Endpoint │
+└───────────────────┘
+        │
+        ▼
+┌───────────────────┐
+│ Queue Cluster     │
+│ for reconcile     │
+└───────────────────┘
+        │
+        ▼
+┌───────────────────┐
+│ Merge endpoints   │
+│ into load_assign  │
+└───────────────────┘
+        │
+        ▼
+┌───────────────────┐
+│ Update snapshot   │
+│ with new Cluster  │
+└───────────────────┘
+```
 
 ## Best Practices
 
