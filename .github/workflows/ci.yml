@@ -965,6 +965,213 @@ jobs:
           echo "  - RDS update -> Controller reconcile -> Envoy config updated"
           echo "  - CDS create -> Controller reconcile -> Envoy cluster added"
 
+      - name: Test SDS with Kubernetes Secret reference and live update
+        run: |
+          NODE_IP="${{ steps.envoy.outputs.node_ip }}"
+          ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}"
+          HTTPS_PORT="${{ steps.envoy.outputs.https_port }}"
+
+          # Initialize results as failed
+          echo "SDS_K8S_REF_RESULT=❌ Failed" >> "$GITHUB_ENV"
+          echo "SDS_K8S_UPDATE_RESULT=❌ Failed" >> "$GITHUB_ENV"
+
+          echo "=== Testing SDS with Kubernetes Secret Reference ==="
+          echo "This test verifies that a TLSSecret with Kubernetes storage correctly"
+          echo "loads certificates from a K8s Secret and detects live updates."
+          echo ""
+
+          MAX_RETRIES=12
+          RETRY_INTERVAL=5
+
+          # Step 1: Generate initial self-signed certificate
+          echo "Step 1: Generating initial self-signed certificate..."
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-initial.key -out /tmp/tls-initial.crt \
+            -days 365 -nodes -subj "/CN=k8sref.e2e.local" 2>/dev/null
+
+          INITIAL_FINGERPRINT=$(openssl x509 -in /tmp/tls-initial.crt -fingerprint -sha256 -noout \
+            | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          echo "Initial cert fingerprint: $INITIAL_FINGERPRINT"
+          echo ""
+
+          # Step 2: Create K8s TLS Secret with the certificate
+          echo "Step 2: Creating Kubernetes TLS Secret..."
+          kubectl create secret tls e2e-k8s-tls-data \
+            --cert=/tmp/tls-initial.crt \
+            --key=/tmp/tls-initial.key \
+            -n xds-system
+          echo "✅ K8s Secret 'e2e-k8s-tls-data' created"
+          echo ""
+
+          # Step 3: Create TLSSecret referencing the K8s Secret
+          echo "Step 3: Creating TLSSecret with Kubernetes storage config..."
+          cat <<'TLSEOF' | kubectl apply -f -
+          apiVersion: envoyxds.io/v1alpha1
+          kind: TLSSecret
+          metadata:
+            name: e2e-k8s-ref-cert
+            namespace: xds-system
+            annotations:
+              clusters: "e2e-test"
+              nodes: "e2e-test-node"
+          spec:
+            domains:
+              - "k8sref.e2e.local"
+            config:
+              type: Kubernetes
+              kubernetes_config:
+                secret_name: e2e-k8s-tls-data
+                namespace: xds-system
+          TLSEOF
+          echo "✅ TLSSecret 'e2e-k8s-ref-cert' created"
+          echo ""
+
+          # Step 4: Create a route using this TLSSecret on the existing HTTPS listener
+          echo "Step 4: Creating route with TLS termination using the K8s-referenced cert..."
+          cat <<'ROUTEEOF' | kubectl apply -f -
+          apiVersion: envoyxds.io/v1alpha1
+          kind: Route
+          metadata:
+            name: k8sref-route
+            namespace: xds-system
+            annotations:
+              clusters: "e2e-test"
+              nodes: "e2e-test-node"
+          spec:
+            listener_refs:
+              - https-complex
+            tlssecret_ref: e2e-k8s-ref-cert
+            filter_chain_match:
+              server_names:
+                - k8sref.e2e.local
+            stat_prefix: k8sref-route
+            codec_type: AUTO
+            route_config:
+              name: k8sref_route_config
+              virtual_hosts:
+                - name: k8sref_host
+                  domains:
+                    - "*"
+                  routes:
+                    - match:
+                        prefix: /
+                      route:
+                        timeout: 15s
+                        cluster: simple-cluster
+            http_filters:
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          ROUTEEOF
+          echo "✅ Route 'k8sref-route' created"
+          echo ""
+
+          # Step 5: Wait for reconciliation and verify initial cert
+          echo "Step 5: Waiting for TLSSecret reconciliation..."
+          INITIAL_VERIFIED=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            STATUS_FINGERPRINT=$(kubectl get tlssecret e2e-k8s-ref-cert -n xds-system \
+              -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+            echo "Attempt $i: TLSSecret fingerprint = '${STATUS_FINGERPRINT:-(empty)}'"
+
+            if [[ -n "$STATUS_FINGERPRINT" && "$STATUS_FINGERPRINT" == "$INITIAL_FINGERPRINT" ]]; then
+              echo "✅ TLSSecret correctly loaded the K8s Secret certificate"
+              INITIAL_VERIFIED=true
+              break
+            fi
+
+            echo "⏳ Not yet reconciled, waiting ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$INITIAL_VERIFIED" != "true" ]]; then
+            echo "❌ TLSSecret did not load the initial K8s Secret certificate"
+            echo "Expected fingerprint: $INITIAL_FINGERPRINT"
+            echo "Got fingerprint: $STATUS_FINGERPRINT"
+            kubectl get tlssecret e2e-k8s-ref-cert -n xds-system -o yaml || true
+            kubectl logs -l app=xds-controller -n xds-system --tail=30 || true
+            exit 1
+          fi
+
+          # Verify cert appears in Envoy
+          CERTS=$(curl -s "http://${NODE_IP}:${ADMIN_PORT}/certs" || echo "FAILED")
+          if echo "$CERTS" | grep -q "e2e-k8s-ref-cert"; then
+            echo "✅ K8s-referenced TLS secret found in Envoy /certs"
+          else
+            echo "⚠️ K8s-referenced TLS secret not yet in Envoy /certs (may need route activation)"
+          fi
+
+          # Verify HTTPS works with the cert
+          HTTPS_CODE=$(curl -s -k -o /dev/null -w "%{http_code}" \
+            -H "Host: k8sref.e2e.local" \
+            "https://${NODE_IP}:${HTTPS_PORT}/" --max-time 15 2>/dev/null || echo "000")
+          if [[ "$HTTPS_CODE" != "000" ]]; then
+            echo "✅ HTTPS connection to k8sref.e2e.local established (status: $HTTPS_CODE)"
+          else
+            echo "⚠️ HTTPS connection to k8sref.e2e.local failed (cert may still be propagating)"
+          fi
+
+          echo "SDS_K8S_REF_RESULT=✅ Passed" >> "$GITHUB_ENV"
+          echo ""
+
+          # Step 6: Generate a NEW certificate and update the K8s Secret
+          echo "Step 6: Generating updated certificate..."
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-updated.key -out /tmp/tls-updated.crt \
+            -days 365 -nodes -subj "/CN=k8sref.e2e.local/O=Updated" 2>/dev/null
+
+          UPDATED_FINGERPRINT=$(openssl x509 -in /tmp/tls-updated.crt -fingerprint -sha256 -noout \
+            | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          echo "Updated cert fingerprint: $UPDATED_FINGERPRINT"
+          echo ""
+
+          # Step 7: Update the K8s Secret in-place
+          echo "Step 7: Updating Kubernetes Secret with new certificate..."
+          kubectl create secret tls e2e-k8s-tls-data \
+            --cert=/tmp/tls-updated.crt \
+            --key=/tmp/tls-updated.key \
+            -n xds-system \
+            --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ K8s Secret updated"
+          echo ""
+
+          # Step 8: Verify controller detects the change and updates TLSSecret
+          echo "Step 8: Verifying controller detects K8s Secret update..."
+          UPDATE_VERIFIED=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            NEW_STATUS_FINGERPRINT=$(kubectl get tlssecret e2e-k8s-ref-cert -n xds-system \
+              -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+            echo "Attempt $i: TLSSecret fingerprint = '${NEW_STATUS_FINGERPRINT:-(empty)}'"
+
+            if [[ "$NEW_STATUS_FINGERPRINT" == "$UPDATED_FINGERPRINT" ]]; then
+              echo "✅ TLSSecret fingerprint updated after K8s Secret change!"
+              UPDATE_VERIFIED=true
+              break
+            fi
+
+            echo "⏳ Fingerprint not yet updated, waiting ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$UPDATE_VERIFIED" != "true" ]]; then
+            echo "❌ TLSSecret was NOT reconciled after K8s Secret update"
+            echo "Expected fingerprint: $UPDATED_FINGERPRINT"
+            echo "Got fingerprint: $NEW_STATUS_FINGERPRINT"
+            echo ""
+            echo "=== Debug: TLSSecret status ==="
+            kubectl get tlssecret e2e-k8s-ref-cert -n xds-system -o yaml || true
+            echo ""
+            echo "=== Debug: xDS Controller logs ==="
+            kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
+            exit 1
+          fi
+
+          echo "SDS_K8S_UPDATE_RESULT=✅ Passed" >> "$GITHUB_ENV"
+          echo ""
+          echo "=== SDS Kubernetes Secret Reference Test PASSED ==="
+          echo "Successfully verified:"
+          echo "  - TLSSecret loads certificate from referenced K8s Secret"
+          echo "  - Controller detects K8s Secret update and re-reconciles TLSSecret"
+          echo "  - Updated certificate fingerprint propagated to TLSSecret status"
+
       - name: Generate E2E summary
         if: always()
         run: |
@@ -1005,6 +1212,12 @@ jobs:
           echo "| Traffic works with 3 replicas | ${{ env.HA_TRAFFIC_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| RDS live update propagated | ${{ env.HA_RDS_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| CDS live create propagated | ${{ env.HA_CDS_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### SDS Kubernetes Secret Reference Tests" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| TLSSecret loads cert from K8s Secret | ${{ env.SDS_K8S_REF_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| K8s Secret update triggers re-reconcile | ${{ env.SDS_K8S_UPDATE_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Debug on failure
         if: failure()

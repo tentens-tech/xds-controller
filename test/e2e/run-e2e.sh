@@ -353,6 +353,139 @@ run_tests() {
         echo "$upstream_rq"
     fi
     
+    # Step 17: Test SDS with Kubernetes Secret reference and live update
+    log_info "Step 17: Testing SDS with Kubernetes Secret reference..."
+
+    # Generate initial self-signed cert
+    openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-initial.key -out /tmp/tls-initial.crt \
+        -days 365 -nodes -subj "/CN=k8sref.e2e.local" 2>/dev/null
+
+    local initial_fingerprint
+    initial_fingerprint=$(openssl x509 -in /tmp/tls-initial.crt -fingerprint -sha256 -noout \
+        | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+    log_info "Initial cert fingerprint: $initial_fingerprint"
+
+    # Create K8s TLS Secret
+    kubectl create secret tls e2e-k8s-tls-data \
+        --cert=/tmp/tls-initial.crt \
+        --key=/tmp/tls-initial.key \
+        -n "$NAMESPACE"
+
+    # Create TLSSecret referencing the K8s Secret
+    cat <<'TLSEOF' | kubectl apply -f -
+    apiVersion: envoyxds.io/v1alpha1
+    kind: TLSSecret
+    metadata:
+      name: e2e-k8s-ref-cert
+      namespace: xds-system
+      annotations:
+        clusters: "e2e-test"
+        nodes: "e2e-test-node"
+    spec:
+      domains:
+        - "k8sref.e2e.local"
+      config:
+        type: Kubernetes
+        kubernetes_config:
+          secret_name: e2e-k8s-tls-data
+          namespace: xds-system
+TLSEOF
+
+    # Create route using the K8s-referenced TLSSecret
+    cat <<'ROUTEEOF' | kubectl apply -f -
+    apiVersion: envoyxds.io/v1alpha1
+    kind: Route
+    metadata:
+      name: k8sref-route
+      namespace: xds-system
+      annotations:
+        clusters: "e2e-test"
+        nodes: "e2e-test-node"
+    spec:
+      listener_refs:
+        - https-complex
+      tlssecret_ref: e2e-k8s-ref-cert
+      filter_chain_match:
+        server_names:
+          - k8sref.e2e.local
+      stat_prefix: k8sref-route
+      codec_type: AUTO
+      route_config:
+        name: k8sref_route_config
+        virtual_hosts:
+          - name: k8sref_host
+            domains:
+              - "*"
+            routes:
+              - match:
+                  prefix: /
+                route:
+                  timeout: 15s
+                  cluster: simple-cluster
+      http_filters:
+        - name: envoy.filters.http.router
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+ROUTEEOF
+
+    # Wait for reconciliation and verify initial cert
+    local sds_retries=12
+    local sds_interval=5
+    local initial_verified=false
+
+    for i in $(seq 1 $sds_retries); do
+        local status_fp
+        status_fp=$(kubectl get tlssecret e2e-k8s-ref-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+
+        if [[ -n "$status_fp" && "$status_fp" == "$initial_fingerprint" ]]; then
+            log_info "✓ TLSSecret correctly loaded the K8s Secret certificate (attempt $i)"
+            initial_verified=true
+            break
+        fi
+        sleep $sds_interval
+    done
+
+    if [[ "$initial_verified" != "true" ]]; then
+        log_error "✗ TLSSecret did not load initial K8s Secret certificate"
+        ((test_failures++))
+    fi
+
+    # Generate updated cert and update K8s Secret
+    openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-updated.key -out /tmp/tls-updated.crt \
+        -days 365 -nodes -subj "/CN=k8sref.e2e.local/O=Updated" 2>/dev/null
+
+    local updated_fingerprint
+    updated_fingerprint=$(openssl x509 -in /tmp/tls-updated.crt -fingerprint -sha256 -noout \
+        | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+
+    kubectl create secret tls e2e-k8s-tls-data \
+        --cert=/tmp/tls-updated.crt \
+        --key=/tmp/tls-updated.key \
+        -n "$NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    log_info "K8s Secret updated with new certificate"
+
+    # Verify controller detects the change
+    local update_verified=false
+    for i in $(seq 1 $sds_retries); do
+        local new_fp
+        new_fp=$(kubectl get tlssecret e2e-k8s-ref-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+
+        if [[ "$new_fp" == "$updated_fingerprint" ]]; then
+            log_info "✓ TLSSecret re-reconciled after K8s Secret update (attempt $i)"
+            update_verified=true
+            break
+        fi
+        sleep $sds_interval
+    done
+
+    if [[ "$update_verified" != "true" ]]; then
+        log_error "✗ TLSSecret was NOT reconciled after K8s Secret update"
+        ((test_failures++))
+    fi
+
     # Summary
     log_info "=== E2E Test Summary ==="
     if [[ $test_failures -eq 0 ]]; then
