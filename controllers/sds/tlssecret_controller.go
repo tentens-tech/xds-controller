@@ -29,22 +29,27 @@ import (
 	"time"
 
 	auth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 	"github.com/tentens-tech/xds-controller/controllers/util"
 	"github.com/tentens-tech/xds-controller/pkg/xds"
 	xdserr "github.com/tentens-tech/xds-controller/pkg/xds/err"
+	xdstypes "github.com/tentens-tech/xds-controller/pkg/xds/types"
 )
 
 // TLSSecretReconciler reconciles a TLSSecret object
@@ -308,9 +313,111 @@ func (r *TLSSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: 10,
 		}).
-		For(&envoyxdsv1alpha1.TLSSecret{}).
-		WithEventFilter(predicate.GenerationChangedPredicate{}).
+		For(&envoyxdsv1alpha1.TLSSecret{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.findTLSSecretsForK8sSecret),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
 		Complete(r)
+}
+
+// resolveK8sSecretRef returns the Kubernetes Secret name and namespace that a TLSSecret
+// references for its certificate storage. It returns empty strings if the TLSSecret does
+// not use Kubernetes storage. The globalStorage parameter provides the controller-level
+// storage config so that the inference matches GetSecret (e.g. global Vault config).
+func resolveK8sSecretRef(tlsSecret *envoyxdsv1alpha1.TLSSecret, defaultNamespace string, globalStorage *xdstypes.StorageConfig) (name, namespace string) {
+	spec := &tlsSecret.Spec.DomainConfig
+
+	storageType := spec.Config.Type
+
+	// When Type is not explicitly set, infer it the same way GetSecret does:
+	// if KubernetesStorageConfig is present, or if no local path is set, it
+	// defaults to Kubernetes storage.
+	if storageType == "" {
+		switch {
+		case spec.Challenge != nil:
+			// Let's Encrypt: defaults to Kubernetes when no Vault is configured.
+			// Check both per-resource and global Vault config, matching GetSecret.
+			if spec.Config.VaultStorageConfig != nil {
+				return "", ""
+			}
+			if globalStorage != nil && globalStorage.VaultStorageConfig != nil {
+				return "", ""
+			}
+			storageType = xdstypes.Kubernetes
+		case spec.Config.KubernetesStorageConfig != nil:
+			storageType = xdstypes.Kubernetes
+		case spec.Config.LocalStorageConfig != nil && spec.Config.LocalStorageConfig.Path != "":
+			return "", ""
+		default:
+			// Falls back to Kubernetes when k8s client is available (which it is
+			// if this controller is running), matching GetSecret behavior.
+			storageType = xdstypes.Kubernetes
+		}
+	}
+
+	if storageType != xdstypes.Kubernetes {
+		return "", ""
+	}
+
+	// Resolve effective secret name and namespace, mirroring StorageConfigRead logic.
+	name = tlsSecret.Name
+	namespace = defaultNamespace
+	if tlsSecret.Namespace != "" {
+		namespace = tlsSecret.Namespace
+	}
+	if spec.Config.KubernetesStorageConfig != nil {
+		if spec.Config.KubernetesStorageConfig.SecretName != "" {
+			name = spec.Config.KubernetesStorageConfig.SecretName
+		}
+		if spec.Config.KubernetesStorageConfig.Namespace != "" {
+			namespace = spec.Config.KubernetesStorageConfig.Namespace
+		}
+	}
+	return name, namespace
+}
+
+// findTLSSecretsForK8sSecret maps a Kubernetes Secret event to the TLSSecret
+// resources that reference it, so that updating a K8s Secret triggers
+// reconciliation of the corresponding TLSSecret(s).
+func (r *TLSSecretReconciler) findTLSSecretsForK8sSecret(ctx context.Context, obj client.Object) []reconcile.Request {
+	log := ctrllog.FromContext(ctx)
+
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	var tlsSecretList envoyxdsv1alpha1.TLSSecretList
+	if err := r.List(ctx, &tlsSecretList); err != nil {
+		log.Error(err, "Failed to list TLSSecrets for Secret watch")
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for i := range tlsSecretList.Items {
+		ts := &tlsSecretList.Items[i]
+		refName, refNamespace := resolveK8sSecretRef(ts, r.Config.DefaultNamespace, &r.Config.Storage)
+		if refName == "" {
+			continue
+		}
+		if refName == secret.Name && refNamespace == secret.Namespace {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      ts.Name,
+					Namespace: ts.Namespace,
+				},
+			})
+		}
+	}
+
+	if len(requests) > 0 {
+		log.V(1).Info("Kubernetes Secret changed, triggering TLSSecret reconciliation",
+			"secret", secret.Name, "namespace", secret.Namespace, "tlsSecrets", len(requests))
+	}
+
+	return requests
 }
 
 // secretsEqual compares two Envoy TLS secrets by name and inline cert/key bytes.
