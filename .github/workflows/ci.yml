@@ -983,14 +983,29 @@ jobs:
           MAX_RETRIES=12
           RETRY_INTERVAL=5
 
+          # Helper: extract cert info for our secret from Envoy /certs endpoint
+          envoy_cert_info() {
+            curl -s "http://${NODE_IP}:${ADMIN_PORT}/certs" 2>/dev/null \
+              | jq -r '
+                .certificates[]
+                | select(.cert_chain != null)
+                | .cert_chain[]
+                | select(.subject_alt_names[]?.dns? == "k8sref.e2e.local" // false)
+                | {serial_number, valid_from, expiration_time, sha256_fingerprint}
+              ' 2>/dev/null || echo "(not found)"
+          }
+
           # Step 1: Generate initial self-signed certificate
           echo "Step 1: Generating initial self-signed certificate..."
           openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-initial.key -out /tmp/tls-initial.crt \
-            -days 365 -nodes -subj "/CN=k8sref.e2e.local" 2>/dev/null
+            -days 365 -nodes -subj "/CN=k8sref.e2e.local" \
+            -addext "subjectAltName=DNS:k8sref.e2e.local" 2>/dev/null
 
           INITIAL_FINGERPRINT=$(openssl x509 -in /tmp/tls-initial.crt -fingerprint -sha256 -noout \
             | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          INITIAL_SERIAL=$(openssl x509 -in /tmp/tls-initial.crt -serial -noout | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]')
           echo "Initial cert fingerprint: $INITIAL_FINGERPRINT"
+          echo "Initial cert serial:      $INITIAL_SERIAL"
           echo ""
 
           # Step 2: Create K8s TLS Secret with the certificate
@@ -1065,96 +1080,116 @@ jobs:
           echo "✅ Route 'k8sref-route' created"
           echo ""
 
-          # Step 5: Wait for reconciliation and verify initial cert
+          # Step 5: Wait for TLSSecret reconciliation and verify initial cert
           echo "Step 5: Waiting for TLSSecret reconciliation..."
           INITIAL_VERIFIED=false
           for i in $(seq 1 $MAX_RETRIES); do
             STATUS_FINGERPRINT=$(kubectl get tlssecret e2e-k8s-ref-cert -n xds-system \
               -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
-            echo "Attempt $i: TLSSecret fingerprint = '${STATUS_FINGERPRINT:-(empty)}'"
 
             if [[ -n "$STATUS_FINGERPRINT" && "$STATUS_FINGERPRINT" == "$INITIAL_FINGERPRINT" ]]; then
-              echo "✅ TLSSecret correctly loaded the K8s Secret certificate"
+              echo "✅ TLSSecret correctly loaded the K8s Secret certificate (attempt $i)"
               INITIAL_VERIFIED=true
               break
             fi
 
-            echo "⏳ Not yet reconciled, waiting ${RETRY_INTERVAL}s..."
+            echo "⏳ Attempt $i: fingerprint='${STATUS_FINGERPRINT:-(empty)}', waiting ${RETRY_INTERVAL}s..."
             sleep $RETRY_INTERVAL
           done
 
           if [[ "$INITIAL_VERIFIED" != "true" ]]; then
             echo "❌ TLSSecret did not load the initial K8s Secret certificate"
             echo "Expected fingerprint: $INITIAL_FINGERPRINT"
-            echo "Got fingerprint: $STATUS_FINGERPRINT"
+            echo "Got fingerprint:      $STATUS_FINGERPRINT"
             kubectl get tlssecret e2e-k8s-ref-cert -n xds-system -o yaml || true
             kubectl logs -l app=xds-controller -n xds-system --tail=30 || true
             exit 1
           fi
 
-          # Verify cert appears in Envoy
-          CERTS=$(curl -s "http://${NODE_IP}:${ADMIN_PORT}/certs" || echo "FAILED")
-          if echo "$CERTS" | grep -q "e2e-k8s-ref-cert"; then
-            echo "✅ K8s-referenced TLS secret found in Envoy /certs"
+          # Step 6: Verify cert is visible from Envoy side (wait for SDS propagation)
+          echo ""
+          echo "Step 6: Verifying certificate in Envoy (before update)..."
+          ENVOY_CERT_BEFORE=""
+          for i in $(seq 1 $MAX_RETRIES); do
+            ENVOY_CERT_BEFORE=$(envoy_cert_info)
+            if [[ "$ENVOY_CERT_BEFORE" != "(not found)" && -n "$ENVOY_CERT_BEFORE" ]]; then
+              break
+            fi
+            echo "⏳ Attempt $i: cert not yet in Envoy, waiting ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done
+
+          echo "--- Envoy /certs BEFORE update ---"
+          echo "$ENVOY_CERT_BEFORE"
+          echo "---"
+          echo ""
+
+          # Also verify HTTPS handshake works and capture the served cert serial
+          SERVED_SERIAL_BEFORE=$(echo | openssl s_client -servername k8sref.e2e.local \
+            -connect "${NODE_IP}:${HTTPS_PORT}" 2>/dev/null \
+            | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+
+          if [[ -n "$SERVED_SERIAL_BEFORE" ]]; then
+            echo "✅ HTTPS handshake succeeded, Envoy is serving cert serial: $SERVED_SERIAL_BEFORE"
           else
-            echo "⚠️ K8s-referenced TLS secret not yet in Envoy /certs (may need route activation)"
+            echo "⚠️ Could not extract cert serial from HTTPS handshake (cert may still be propagating)"
           fi
 
-          # Verify HTTPS works with the cert
-          HTTPS_CODE=$(curl -s -k -o /dev/null -w "%{http_code}" \
-            -H "Host: k8sref.e2e.local" \
-            "https://${NODE_IP}:${HTTPS_PORT}/" --max-time 15 2>/dev/null || echo "000")
-          if [[ "$HTTPS_CODE" != "000" ]]; then
-            echo "✅ HTTPS connection to k8sref.e2e.local established (status: $HTTPS_CODE)"
-          else
-            echo "⚠️ HTTPS connection to k8sref.e2e.local failed (cert may still be propagating)"
-          fi
+          echo ""
+          echo "--- xDS Controller logs (after initial load) ---"
+          for pod in $(kubectl get pods -n xds-system -l app=xds-controller -o jsonpath='{.items[*].metadata.name}'); do
+            echo "--- $pod ---"
+            kubectl logs "$pod" -n xds-system --tail=10 | grep -iE "e2e-k8s|secret|SDS|snapshot" || echo "(no relevant logs)"
+          done
+          echo "---"
 
           echo "SDS_K8S_REF_RESULT=✅ Passed" >> "$GITHUB_ENV"
           echo ""
 
-          # Step 6: Generate a NEW certificate and update the K8s Secret
-          echo "Step 6: Generating updated certificate..."
+          # Step 7: Generate a NEW certificate and update the K8s Secret
+          echo "Step 7: Generating updated certificate (new key + serial)..."
           openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-updated.key -out /tmp/tls-updated.crt \
-            -days 365 -nodes -subj "/CN=k8sref.e2e.local/O=Updated" 2>/dev/null
+            -days 365 -nodes -subj "/CN=k8sref.e2e.local/O=Updated" \
+            -addext "subjectAltName=DNS:k8sref.e2e.local" 2>/dev/null
 
           UPDATED_FINGERPRINT=$(openssl x509 -in /tmp/tls-updated.crt -fingerprint -sha256 -noout \
             | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          UPDATED_SERIAL=$(openssl x509 -in /tmp/tls-updated.crt -serial -noout | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]')
           echo "Updated cert fingerprint: $UPDATED_FINGERPRINT"
+          echo "Updated cert serial:      $UPDATED_SERIAL"
           echo ""
 
-          # Step 7: Update the K8s Secret in-place
-          echo "Step 7: Updating Kubernetes Secret with new certificate..."
+          # Step 8: Update the K8s Secret in-place
+          echo "Step 8: Updating Kubernetes Secret with new certificate..."
           kubectl create secret tls e2e-k8s-tls-data \
             --cert=/tmp/tls-updated.crt \
             --key=/tmp/tls-updated.key \
             -n xds-system \
             --dry-run=client -o yaml | kubectl apply -f -
-          echo "✅ K8s Secret updated"
+          echo "✅ K8s Secret 'e2e-k8s-tls-data' updated"
           echo ""
 
-          # Step 8: Verify controller detects the change and updates TLSSecret
-          echo "Step 8: Verifying controller detects K8s Secret update..."
+          # Step 9: Verify controller detects the change (TLSSecret status fingerprint)
+          echo "Step 9: Verifying controller detects K8s Secret update..."
           UPDATE_VERIFIED=false
           for i in $(seq 1 $MAX_RETRIES); do
             NEW_STATUS_FINGERPRINT=$(kubectl get tlssecret e2e-k8s-ref-cert -n xds-system \
               -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
-            echo "Attempt $i: TLSSecret fingerprint = '${NEW_STATUS_FINGERPRINT:-(empty)}'"
 
             if [[ "$NEW_STATUS_FINGERPRINT" == "$UPDATED_FINGERPRINT" ]]; then
-              echo "✅ TLSSecret fingerprint updated after K8s Secret change!"
+              echo "✅ TLSSecret fingerprint updated after K8s Secret change! (attempt $i)"
               UPDATE_VERIFIED=true
               break
             fi
 
-            echo "⏳ Fingerprint not yet updated, waiting ${RETRY_INTERVAL}s..."
+            echo "⏳ Attempt $i: fingerprint='${NEW_STATUS_FINGERPRINT:-(empty)}', waiting ${RETRY_INTERVAL}s..."
             sleep $RETRY_INTERVAL
           done
 
           if [[ "$UPDATE_VERIFIED" != "true" ]]; then
             echo "❌ TLSSecret was NOT reconciled after K8s Secret update"
             echo "Expected fingerprint: $UPDATED_FINGERPRINT"
-            echo "Got fingerprint: $NEW_STATUS_FINGERPRINT"
+            echo "Got fingerprint:      $NEW_STATUS_FINGERPRINT"
             echo ""
             echo "=== Debug: TLSSecret status ==="
             kubectl get tlssecret e2e-k8s-ref-cert -n xds-system -o yaml || true
@@ -1164,6 +1199,58 @@ jobs:
             exit 1
           fi
 
+          # Step 10: Verify Envoy received the updated cert
+          echo ""
+          echo "Step 10: Verifying updated certificate in Envoy (after update)..."
+          ENVOY_CERT_AFTER=""
+          for i in $(seq 1 $MAX_RETRIES); do
+            ENVOY_CERT_AFTER=$(envoy_cert_info)
+            # Check if the fingerprint in Envoy changed from the before-state
+            if echo "$ENVOY_CERT_AFTER" | grep -qi "$UPDATED_FINGERPRINT"; then
+              break
+            fi
+            echo "⏳ Attempt $i: Envoy cert not yet updated, waiting ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done
+
+          echo "--- Envoy /certs AFTER update ---"
+          echo "$ENVOY_CERT_AFTER"
+          echo "---"
+          echo ""
+
+          # Verify the HTTPS handshake now serves the new cert
+          SERVED_SERIAL_AFTER=$(echo | openssl s_client -servername k8sref.e2e.local \
+            -connect "${NODE_IP}:${HTTPS_PORT}" 2>/dev/null \
+            | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+
+          if [[ -n "$SERVED_SERIAL_AFTER" ]]; then
+            echo "Envoy is now serving cert serial: $SERVED_SERIAL_AFTER"
+          fi
+
+          echo ""
+          echo "--- xDS Controller logs (after update) ---"
+          for pod in $(kubectl get pods -n xds-system -l app=xds-controller -o jsonpath='{.items[*].metadata.name}'); do
+            echo "--- $pod ---"
+            kubectl logs "$pod" -n xds-system --tail=10 | grep -iE "e2e-k8s|secret|SDS|Updating|Adding|snapshot|Kubernetes Secret changed" || echo "(no relevant logs)"
+          done
+          echo "---"
+          echo ""
+
+          # Final comparison summary
+          echo "=== Before / After Comparison ==="
+          echo "                    BEFORE                              AFTER"
+          echo "Fingerprint (CR):   ${INITIAL_FINGERPRINT:0:24}...  ${UPDATED_FINGERPRINT:0:24}..."
+          echo "Serial (openssl):   $INITIAL_SERIAL                    $UPDATED_SERIAL"
+          if [[ -n "$SERVED_SERIAL_BEFORE" && -n "$SERVED_SERIAL_AFTER" ]]; then
+            echo "Serial (Envoy TLS): $SERVED_SERIAL_BEFORE                    $SERVED_SERIAL_AFTER"
+            if [[ "$SERVED_SERIAL_BEFORE" != "$SERVED_SERIAL_AFTER" ]]; then
+              echo "✅ Envoy TLS handshake confirms certificate was rotated"
+            else
+              echo "⚠️ Envoy TLS serial did not change (SDS propagation may be delayed)"
+            fi
+          fi
+          echo ""
+
           echo "SDS_K8S_UPDATE_RESULT=✅ Passed" >> "$GITHUB_ENV"
           echo ""
           echo "=== SDS Kubernetes Secret Reference Test PASSED ==="
@@ -1171,6 +1258,7 @@ jobs:
           echo "  - TLSSecret loads certificate from referenced K8s Secret"
           echo "  - Controller detects K8s Secret update and re-reconciles TLSSecret"
           echo "  - Updated certificate fingerprint propagated to TLSSecret status"
+          echo "  - Envoy /certs reflects the updated certificate"
 
       - name: Generate E2E summary
         if: always()

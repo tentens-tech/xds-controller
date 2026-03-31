@@ -356,14 +356,21 @@ run_tests() {
     # Step 17: Test SDS with Kubernetes Secret reference and live update
     log_info "Step 17: Testing SDS with Kubernetes Secret reference..."
 
+    local sds_retries=12
+    local sds_interval=5
+
     # Generate initial self-signed cert
     openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-initial.key -out /tmp/tls-initial.crt \
-        -days 365 -nodes -subj "/CN=k8sref.e2e.local" 2>/dev/null
+        -days 365 -nodes -subj "/CN=k8sref.e2e.local" \
+        -addext "subjectAltName=DNS:k8sref.e2e.local" 2>/dev/null
 
     local initial_fingerprint
     initial_fingerprint=$(openssl x509 -in /tmp/tls-initial.crt -fingerprint -sha256 -noout \
         | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+    local initial_serial
+    initial_serial=$(openssl x509 -in /tmp/tls-initial.crt -serial -noout | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]')
     log_info "Initial cert fingerprint: $initial_fingerprint"
+    log_info "Initial cert serial:      $initial_serial"
 
     # Create K8s TLS Secret
     kubectl create secret tls e2e-k8s-tls-data \
@@ -429,10 +436,7 @@ TLSEOF
 ROUTEEOF
 
     # Wait for reconciliation and verify initial cert
-    local sds_retries=12
-    local sds_interval=5
     local initial_verified=false
-
     for i in $(seq 1 $sds_retries); do
         local status_fp
         status_fp=$(kubectl get tlssecret e2e-k8s-ref-cert -n "$NAMESPACE" \
@@ -451,13 +455,34 @@ ROUTEEOF
         ((test_failures++))
     fi
 
+    # Show Envoy-side cert state BEFORE update
+    log_info "--- Envoy /certs BEFORE update ---"
+    curl -s "http://${node_ip}:${envoy_admin_port}/certs" 2>/dev/null \
+        | jq -r '.certificates[] | select(.cert_chain != null) | .cert_chain[] | select(.subject_alt_names[]?.dns? == "k8sref.e2e.local" // false)' 2>/dev/null \
+        || echo "(cert not yet visible in Envoy)"
+    echo "---"
+
+    # Capture served cert serial via HTTPS handshake
+    local served_serial_before
+    served_serial_before=$(echo | openssl s_client -servername k8sref.e2e.local \
+        -connect "${node_ip}:${envoy_https_port}" 2>/dev/null \
+        | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+    if [[ -n "$served_serial_before" ]]; then
+        log_info "Envoy serving cert serial (before): $served_serial_before"
+    fi
+
     # Generate updated cert and update K8s Secret
     openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-updated.key -out /tmp/tls-updated.crt \
-        -days 365 -nodes -subj "/CN=k8sref.e2e.local/O=Updated" 2>/dev/null
+        -days 365 -nodes -subj "/CN=k8sref.e2e.local/O=Updated" \
+        -addext "subjectAltName=DNS:k8sref.e2e.local" 2>/dev/null
 
     local updated_fingerprint
     updated_fingerprint=$(openssl x509 -in /tmp/tls-updated.crt -fingerprint -sha256 -noout \
         | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+    local updated_serial
+    updated_serial=$(openssl x509 -in /tmp/tls-updated.crt -serial -noout | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]')
+    log_info "Updated cert fingerprint: $updated_fingerprint"
+    log_info "Updated cert serial:      $updated_serial"
 
     kubectl create secret tls e2e-k8s-tls-data \
         --cert=/tmp/tls-updated.crt \
@@ -484,6 +509,32 @@ ROUTEEOF
     if [[ "$update_verified" != "true" ]]; then
         log_error "✗ TLSSecret was NOT reconciled after K8s Secret update"
         ((test_failures++))
+    fi
+
+    # Show Envoy-side cert state AFTER update
+    log_info "--- Envoy /certs AFTER update ---"
+    curl -s "http://${node_ip}:${envoy_admin_port}/certs" 2>/dev/null \
+        | jq -r '.certificates[] | select(.cert_chain != null) | .cert_chain[] | select(.subject_alt_names[]?.dns? == "k8sref.e2e.local" // false)' 2>/dev/null \
+        || echo "(cert not visible in Envoy)"
+    echo "---"
+
+    # Capture served cert serial AFTER update
+    local served_serial_after
+    served_serial_after=$(echo | openssl s_client -servername k8sref.e2e.local \
+        -connect "${node_ip}:${envoy_https_port}" 2>/dev/null \
+        | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+    if [[ -n "$served_serial_after" ]]; then
+        log_info "Envoy serving cert serial (after): $served_serial_after"
+    fi
+
+    # Summary comparison
+    log_info "=== Before / After Comparison ==="
+    echo "  Serial (openssl):   $initial_serial -> $updated_serial"
+    if [[ -n "$served_serial_before" && -n "$served_serial_after" ]]; then
+        echo "  Serial (Envoy TLS): $served_serial_before -> $served_serial_after"
+        if [[ "$served_serial_before" != "$served_serial_after" ]]; then
+            log_info "✓ Envoy TLS handshake confirms certificate was rotated"
+        fi
     fi
 
     # Summary
