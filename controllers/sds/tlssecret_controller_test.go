@@ -357,10 +357,10 @@ func TestFindTLSSecretsForK8sSecret(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	tests := []struct {
-		name          string
-		secret        *corev1.Secret
-		tlsSecrets    []envoyxdsv1alpha1.TLSSecret
-		wantRequests  []reconcile.Request
+		name         string
+		secret       *corev1.Secret
+		tlsSecrets   []envoyxdsv1alpha1.TLSSecret
+		wantRequests []reconcile.Request
 	}{
 		{
 			name: "matches TLSSecret by default name (same name as TLSSecret)",

@@ -455,20 +455,29 @@ ROUTEEOF
         ((test_failures++))
     fi
 
-    # Show Envoy-side cert state BEFORE update
+    # Verify Envoy serves the initial cert (hard gate via HTTPS handshake)
+    local served_serial_before=""
+    for i in $(seq 1 $sds_retries); do
+        served_serial_before=$(echo | openssl s_client -servername k8sref.e2e.local \
+            -connect "${node_ip}:${envoy_https_port}" 2>/dev/null \
+            | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+
+        if [[ "$served_serial_before" == "$initial_serial" ]]; then
+            log_info "✓ Envoy is serving the initial cert (serial: $served_serial_before) (attempt $i)"
+            break
+        fi
+        sleep $sds_interval
+    done
+
     log_info "--- Envoy /certs BEFORE update ---"
     curl -s "http://${node_ip}:${envoy_admin_port}/certs" 2>/dev/null \
         | jq -r '.certificates[] | select(.cert_chain != null) | .cert_chain[] | select(.subject_alt_names[]?.dns? == "k8sref.e2e.local" // false)' 2>/dev/null \
         || echo "(cert not yet visible in Envoy)"
     echo "---"
 
-    # Capture served cert serial via HTTPS handshake
-    local served_serial_before
-    served_serial_before=$(echo | openssl s_client -servername k8sref.e2e.local \
-        -connect "${node_ip}:${envoy_https_port}" 2>/dev/null \
-        | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
-    if [[ -n "$served_serial_before" ]]; then
-        log_info "Envoy serving cert serial (before): $served_serial_before"
+    if [[ "$served_serial_before" != "$initial_serial" ]]; then
+        log_error "✗ Envoy did not serve the initial certificate (expected serial: $initial_serial, got: $served_serial_before)"
+        ((test_failures++))
     fi
 
     # Generate updated cert and update K8s Secret
@@ -511,30 +520,36 @@ ROUTEEOF
         ((test_failures++))
     fi
 
-    # Show Envoy-side cert state AFTER update
+    # Verify Envoy serves the updated cert (hard gate via HTTPS handshake)
+    local served_serial_after=""
+    for i in $(seq 1 $sds_retries); do
+        served_serial_after=$(echo | openssl s_client -servername k8sref.e2e.local \
+            -connect "${node_ip}:${envoy_https_port}" 2>/dev/null \
+            | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+
+        if [[ "$served_serial_after" == "$updated_serial" ]]; then
+            log_info "✓ Envoy is serving the updated cert (serial: $served_serial_after) (attempt $i)"
+            break
+        fi
+        sleep $sds_interval
+    done
+
     log_info "--- Envoy /certs AFTER update ---"
     curl -s "http://${node_ip}:${envoy_admin_port}/certs" 2>/dev/null \
         | jq -r '.certificates[] | select(.cert_chain != null) | .cert_chain[] | select(.subject_alt_names[]?.dns? == "k8sref.e2e.local" // false)' 2>/dev/null \
         || echo "(cert not visible in Envoy)"
     echo "---"
 
-    # Capture served cert serial AFTER update
-    local served_serial_after
-    served_serial_after=$(echo | openssl s_client -servername k8sref.e2e.local \
-        -connect "${node_ip}:${envoy_https_port}" 2>/dev/null \
-        | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
-    if [[ -n "$served_serial_after" ]]; then
-        log_info "Envoy serving cert serial (after): $served_serial_after"
-    fi
-
     # Summary comparison
     log_info "=== Before / After Comparison ==="
     echo "  Serial (openssl):   $initial_serial -> $updated_serial"
-    if [[ -n "$served_serial_before" && -n "$served_serial_after" ]]; then
-        echo "  Serial (Envoy TLS): $served_serial_before -> $served_serial_after"
-        if [[ "$served_serial_before" != "$served_serial_after" ]]; then
-            log_info "✓ Envoy TLS handshake confirms certificate was rotated"
-        fi
+    echo "  Serial (Envoy TLS): $served_serial_before -> $served_serial_after"
+
+    if [[ "$served_serial_after" != "$updated_serial" ]]; then
+        log_error "✗ Envoy did not serve the updated certificate (expected serial: $updated_serial, got: $served_serial_after)"
+        ((test_failures++))
+    else
+        log_info "✓ Envoy TLS handshake confirms certificate was rotated"
     fi
 
     # Summary

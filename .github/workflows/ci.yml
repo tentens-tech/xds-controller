@@ -1106,33 +1106,39 @@ jobs:
             exit 1
           fi
 
-          # Step 6: Verify cert is visible from Envoy side (wait for SDS propagation)
+          # Step 6: Verify Envoy actually serves the initial cert (hard gate)
           echo ""
-          echo "Step 6: Verifying certificate in Envoy (before update)..."
-          ENVOY_CERT_BEFORE=""
+          echo "Step 6: Verifying Envoy serves the initial certificate (HTTPS handshake)..."
+          SERVED_SERIAL_BEFORE=""
           for i in $(seq 1 $MAX_RETRIES); do
-            ENVOY_CERT_BEFORE=$(envoy_cert_info)
-            if [[ "$ENVOY_CERT_BEFORE" != "(not found)" && -n "$ENVOY_CERT_BEFORE" ]]; then
+            SERVED_SERIAL_BEFORE=$(echo | openssl s_client -servername k8sref.e2e.local \
+              -connect "${NODE_IP}:${HTTPS_PORT}" 2>/dev/null \
+              | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+
+            if [[ "$SERVED_SERIAL_BEFORE" == "$INITIAL_SERIAL" ]]; then
+              echo "✅ Envoy is serving the initial cert (serial: $SERVED_SERIAL_BEFORE) (attempt $i)"
               break
             fi
-            echo "⏳ Attempt $i: cert not yet in Envoy, waiting ${RETRY_INTERVAL}s..."
+
+            echo "⏳ Attempt $i: Envoy serving serial='${SERVED_SERIAL_BEFORE:-(handshake failed)}', expected '$INITIAL_SERIAL', waiting ${RETRY_INTERVAL}s..."
             sleep $RETRY_INTERVAL
           done
 
-          echo "--- Envoy /certs BEFORE update ---"
-          echo "$ENVOY_CERT_BEFORE"
-          echo "---"
           echo ""
+          echo "--- Envoy /certs BEFORE update ---"
+          envoy_cert_info
+          echo "---"
 
-          # Also verify HTTPS handshake works and capture the served cert serial
-          SERVED_SERIAL_BEFORE=$(echo | openssl s_client -servername k8sref.e2e.local \
-            -connect "${NODE_IP}:${HTTPS_PORT}" 2>/dev/null \
-            | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
-
-          if [[ -n "$SERVED_SERIAL_BEFORE" ]]; then
-            echo "✅ HTTPS handshake succeeded, Envoy is serving cert serial: $SERVED_SERIAL_BEFORE"
-          else
-            echo "⚠️ Could not extract cert serial from HTTPS handshake (cert may still be propagating)"
+          if [[ "$SERVED_SERIAL_BEFORE" != "$INITIAL_SERIAL" ]]; then
+            echo "❌ Envoy did not serve the initial certificate"
+            echo "Expected serial: $INITIAL_SERIAL"
+            echo "Got serial:      $SERVED_SERIAL_BEFORE"
+            echo ""
+            echo "=== Debug: xDS Controller logs ==="
+            kubectl logs -l app=xds-controller -n xds-system --tail=30 || true
+            echo "=== Debug: Envoy logs ==="
+            kubectl logs -l app=envoy -n xds-system --tail=30 || true
+            exit 1
           fi
 
           echo ""
@@ -1199,33 +1205,28 @@ jobs:
             exit 1
           fi
 
-          # Step 10: Verify Envoy received the updated cert
+          # Step 10: Verify Envoy serves the updated cert (hard gate)
           echo ""
-          echo "Step 10: Verifying updated certificate in Envoy (after update)..."
-          ENVOY_CERT_AFTER=""
+          echo "Step 10: Verifying Envoy serves the updated certificate (HTTPS handshake)..."
+          SERVED_SERIAL_AFTER=""
           for i in $(seq 1 $MAX_RETRIES); do
-            ENVOY_CERT_AFTER=$(envoy_cert_info)
-            # Check if the fingerprint in Envoy changed from the before-state
-            if echo "$ENVOY_CERT_AFTER" | grep -qi "$UPDATED_FINGERPRINT"; then
+            SERVED_SERIAL_AFTER=$(echo | openssl s_client -servername k8sref.e2e.local \
+              -connect "${NODE_IP}:${HTTPS_PORT}" 2>/dev/null \
+              | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+
+            if [[ "$SERVED_SERIAL_AFTER" == "$UPDATED_SERIAL" ]]; then
+              echo "✅ Envoy is serving the updated cert (serial: $SERVED_SERIAL_AFTER) (attempt $i)"
               break
             fi
-            echo "⏳ Attempt $i: Envoy cert not yet updated, waiting ${RETRY_INTERVAL}s..."
+
+            echo "⏳ Attempt $i: Envoy serving serial='${SERVED_SERIAL_AFTER:-(handshake failed)}', expected '$UPDATED_SERIAL', waiting ${RETRY_INTERVAL}s..."
             sleep $RETRY_INTERVAL
           done
 
-          echo "--- Envoy /certs AFTER update ---"
-          echo "$ENVOY_CERT_AFTER"
-          echo "---"
           echo ""
-
-          # Verify the HTTPS handshake now serves the new cert
-          SERVED_SERIAL_AFTER=$(echo | openssl s_client -servername k8sref.e2e.local \
-            -connect "${NODE_IP}:${HTTPS_PORT}" 2>/dev/null \
-            | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
-
-          if [[ -n "$SERVED_SERIAL_AFTER" ]]; then
-            echo "Envoy is now serving cert serial: $SERVED_SERIAL_AFTER"
-          fi
+          echo "--- Envoy /certs AFTER update ---"
+          envoy_cert_info
+          echo "---"
 
           echo ""
           echo "--- xDS Controller logs (after update) ---"
@@ -1234,21 +1235,28 @@ jobs:
             kubectl logs "$pod" -n xds-system --tail=10 | grep -iE "e2e-k8s|secret|SDS|Updating|Adding|snapshot|Kubernetes Secret changed" || echo "(no relevant logs)"
           done
           echo "---"
-          echo ""
 
-          # Final comparison summary
+          echo ""
           echo "=== Before / After Comparison ==="
           echo "                    BEFORE                              AFTER"
           echo "Fingerprint (CR):   ${INITIAL_FINGERPRINT:0:24}...  ${UPDATED_FINGERPRINT:0:24}..."
           echo "Serial (openssl):   $INITIAL_SERIAL                    $UPDATED_SERIAL"
-          if [[ -n "$SERVED_SERIAL_BEFORE" && -n "$SERVED_SERIAL_AFTER" ]]; then
-            echo "Serial (Envoy TLS): $SERVED_SERIAL_BEFORE                    $SERVED_SERIAL_AFTER"
-            if [[ "$SERVED_SERIAL_BEFORE" != "$SERVED_SERIAL_AFTER" ]]; then
-              echo "✅ Envoy TLS handshake confirms certificate was rotated"
-            else
-              echo "⚠️ Envoy TLS serial did not change (SDS propagation may be delayed)"
-            fi
+          echo "Serial (Envoy TLS): $SERVED_SERIAL_BEFORE                    $SERVED_SERIAL_AFTER"
+
+          if [[ "$SERVED_SERIAL_AFTER" != "$UPDATED_SERIAL" ]]; then
+            echo ""
+            echo "❌ Envoy did not serve the updated certificate"
+            echo "Expected serial: $UPDATED_SERIAL"
+            echo "Got serial:      $SERVED_SERIAL_AFTER"
+            echo ""
+            echo "=== Debug: xDS Controller logs ==="
+            kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
+            echo "=== Debug: Envoy logs ==="
+            kubectl logs -l app=envoy -n xds-system --tail=30 || true
+            exit 1
           fi
+
+          echo "✅ Envoy TLS handshake confirms certificate was rotated"
           echo ""
 
           echo "SDS_K8S_UPDATE_RESULT=✅ Passed" >> "$GITHUB_ENV"
@@ -1256,9 +1264,9 @@ jobs:
           echo "=== SDS Kubernetes Secret Reference Test PASSED ==="
           echo "Successfully verified:"
           echo "  - TLSSecret loads certificate from referenced K8s Secret"
+          echo "  - Envoy serves the initial cert (serial verified via TLS handshake)"
           echo "  - Controller detects K8s Secret update and re-reconciles TLSSecret"
-          echo "  - Updated certificate fingerprint propagated to TLSSecret status"
-          echo "  - Envoy /certs reflects the updated certificate"
+          echo "  - Envoy serves the updated cert (serial verified via TLS handshake)"
 
       - name: Generate E2E summary
         if: always()
