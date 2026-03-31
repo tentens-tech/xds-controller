@@ -324,8 +324,9 @@ func (r *TLSSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // resolveK8sSecretRef returns the Kubernetes Secret name and namespace that a TLSSecret
 // references for its certificate storage. It returns empty strings if the TLSSecret does
-// not use Kubernetes storage.
-func resolveK8sSecretRef(tlsSecret *envoyxdsv1alpha1.TLSSecret, defaultNamespace string) (name, namespace string) {
+// not use Kubernetes storage. The globalStorage parameter provides the controller-level
+// storage config so that the inference matches GetSecret (e.g. global Vault config).
+func resolveK8sSecretRef(tlsSecret *envoyxdsv1alpha1.TLSSecret, defaultNamespace string, globalStorage *xdstypes.StorageConfig) (name, namespace string) {
 	spec := &tlsSecret.Spec.DomainConfig
 
 	storageType := spec.Config.Type
@@ -337,9 +338,11 @@ func resolveK8sSecretRef(tlsSecret *envoyxdsv1alpha1.TLSSecret, defaultNamespace
 		switch {
 		case spec.Challenge != nil:
 			// Let's Encrypt: defaults to Kubernetes when no Vault is configured.
-			// We can't inspect the global Config here, so we check the per-resource
-			// storage config. If VaultStorageConfig is set, this is Vault storage.
+			// Check both per-resource and global Vault config, matching GetSecret.
 			if spec.Config.VaultStorageConfig != nil {
+				return "", ""
+			}
+			if globalStorage != nil && globalStorage.VaultStorageConfig != nil {
 				return "", ""
 			}
 			storageType = xdstypes.Kubernetes
@@ -395,7 +398,7 @@ func (r *TLSSecretReconciler) findTLSSecretsForK8sSecret(ctx context.Context, ob
 	var requests []reconcile.Request
 	for i := range tlsSecretList.Items {
 		ts := &tlsSecretList.Items[i]
-		refName, refNamespace := resolveK8sSecretRef(ts, r.Config.DefaultNamespace)
+		refName, refNamespace := resolveK8sSecretRef(ts, r.Config.DefaultNamespace, &r.Config.Storage)
 		if refName == "" {
 			continue
 		}

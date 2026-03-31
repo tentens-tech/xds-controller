@@ -36,11 +36,12 @@ func TestResolveK8sSecretRef(t *testing.T) {
 	const defaultNS = "xds-system"
 
 	tests := []struct {
-		name              string
-		tlsSecret         *envoyxdsv1alpha1.TLSSecret
-		defaultNamespace  string
-		wantName          string
-		wantNamespace     string
+		name             string
+		tlsSecret        *envoyxdsv1alpha1.TLSSecret
+		defaultNamespace string
+		globalStorage    *xdstypes.StorageConfig
+		wantName         string
+		wantNamespace    string
 	}{
 		{
 			name: "kubernetes storage with defaults - uses TLSSecret name and namespace",
@@ -269,6 +270,34 @@ func TestResolveK8sSecretRef(t *testing.T) {
 			wantNamespace:    "",
 		},
 		{
+			name: "challenge with global vault config returns empty (vault storage)",
+			tlsSecret: &envoyxdsv1alpha1.TLSSecret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-cert",
+					Namespace: "default",
+				},
+				Spec: envoyxdsv1alpha1.TLSSecretSpec{
+					DomainConfig: xdstypes.DomainConfig{
+						SecretName: "my-cert",
+						Domains:    []string{"example.com"},
+						Challenge: &xdstypes.ChallengeConfig{
+							ChallengeType: xdstypes.DNS01,
+						},
+						// No per-resource VaultStorageConfig
+					},
+				},
+			},
+			defaultNamespace: defaultNS,
+			globalStorage: &xdstypes.StorageConfig{
+				VaultStorageConfig: &xdstypes.VaultStorageConfig{
+					Path: "/secret/global-certs",
+					URL:  "https://vault.example.com",
+				},
+			},
+			wantName:      "",
+			wantNamespace: "",
+		},
+		{
 			name: "challenge without vault config defaults to kubernetes",
 			tlsSecret: &envoyxdsv1alpha1.TLSSecret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -313,7 +342,7 @@ func TestResolveK8sSecretRef(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			name, namespace := resolveK8sSecretRef(tt.tlsSecret, tt.defaultNamespace)
+			name, namespace := resolveK8sSecretRef(tt.tlsSecret, tt.defaultNamespace, tt.globalStorage)
 			assert.Equal(t, tt.wantName, name)
 			assert.Equal(t, tt.wantNamespace, namespace)
 		})
