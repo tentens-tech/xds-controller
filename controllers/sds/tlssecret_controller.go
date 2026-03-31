@@ -352,7 +352,7 @@ func resolveK8sSecretRef(tlsSecret *envoyxdsv1alpha1.TLSSecret, defaultNamespace
 			return "", ""
 		default:
 			// Falls back to Kubernetes when k8s client is available (which it is
-			// if this controller is running), matching GetSecret behaviour.
+			// if this controller is running), matching GetSecret behavior.
 			storageType = xdstypes.Kubernetes
 		}
 	}
