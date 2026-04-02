@@ -355,8 +355,13 @@ Routes use spec fields to reference listeners and TLS certificates:
 spec:
   listener_refs:
     - "https"              # Attach route to this listener
-  tlssecret_ref: "my-cert" # TLS certificate name (optional)
+  tlssecret_ref: "my-cert" # Primary TLS certificate (optional TLSSecret CR name)
+  tlssecret_refs:
+    - extra-cert-1         # Additional TLSSecret CR names (optional)
+    - extra-cert-2
 ```
+
+`tlssecret_refs` lists extra TLSSecret CRs whose certificates are merged into the same downstream TLS context as `tlssecret_ref`. If both are set, `tlssecret_ref` is listed first, then `tlssecret_refs`, with duplicates and blank entries dropped. Use this when one route needs multiple SDS-backed certs (for example multi-SNI setups). You can use `tlssecret_refs` alone without `tlssecret_ref`.
 
 ## Prometheus Metrics
 

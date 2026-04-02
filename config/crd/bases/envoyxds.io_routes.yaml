@@ -4778,6 +4778,13 @@ spec:
                   TLSSecretRef specifies the TLS secret to use for this route.
                   References a TLSSecret CR by name.
                 type: string
+              tlssecret_refs:
+                description: |-
+                  TLSSecretRefs specifies the TLS secrets to use for this route.
+                  References TLSSecret CRs by name.
+                items:
+                  type: string
+                type: array
               tracing:
                 description: HttpConnectionManager_Tracing represents the Envoy HttpConnectionManager_Tracing
                   configuration.

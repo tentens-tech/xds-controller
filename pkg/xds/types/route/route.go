@@ -36,6 +36,10 @@ type Route struct {
 	// References a TLSSecret CR by name.
 	TLSSecretRef string `json:"tlssecret_ref,omitempty"`
 
+	// TLSSecretRefs specifies the TLS secrets to use for this route.
+	// References TLSSecret CRs by name.
+	TLSSecretRefs []string `json:"tlssecret_refs,omitempty"`
+
 	// FilterChainMatch defines when this route's filter chain is selected.
 	// This is dynamically added to the listener's filter chains.
 	FilterChainMatch *lds.FilterChainMatch `json:"filter_chain_match,omitempty"`
@@ -54,6 +58,11 @@ func (in *Route) DeepCopyInto(out *Route) {
 	*out = *in
 	if in.ListenerRefs != nil {
 		in, out := &in.ListenerRefs, &out.ListenerRefs
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.TLSSecretRefs != nil {
+		in, out := &in.TLSSecretRefs, &out.TLSSecretRefs
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

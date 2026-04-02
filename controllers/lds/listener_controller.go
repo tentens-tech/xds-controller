@@ -794,6 +794,7 @@ func prepareFilters(route envoyxdsv1alpha1.Route, lds *listenerv3.Listener) ([]*
 	delete(data, "filter_chain_match") // Used for filter chain matching
 	delete(data, "listener_refs")      // Custom field for route-to-listener binding
 	delete(data, "tlssecret_ref")      // Custom field for TLS secret binding
+	delete(data, "tlssecret_refs")     // Custom field for TLS secret binding (multiple)
 
 	// Re-marshal the map into JSON
 	routeData, err = json.Marshal(data)
@@ -899,9 +900,44 @@ func duplicateFound(lds *listenerv3.Listener, route *envoyxdsv1alpha1.Route, rou
 	return false
 }
 
+// routeTLSSecretNames returns TLSSecret CR names for the route filter chain transport socket.
+// tlssecret_ref (if set) is listed first, then tlssecret_refs, with duplicates removed.
+func routeTLSSecretNames(route *envoyxdsv1alpha1.Route) []string {
+	if route == nil {
+		return nil
+	}
+	var names []string
+	seen := make(map[string]struct{})
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		names = append(names, s)
+	}
+	add(route.Spec.TLSSecretRef)
+	for _, ref := range route.Spec.TLSSecretRefs {
+		add(ref)
+	}
+	return names
+}
+
 func prepareSecretContext(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listener, filter *listenerv3.FilterChain) *listenerv3.FilterChain {
-	if route.Spec.TLSSecretRef == "" {
+	secretNames := routeTLSSecretNames(route)
+	if len(secretNames) == 0 {
 		return filter
+	}
+
+	sdsConfigs := make([]*authv3.SdsSecretConfig, 0, len(secretNames))
+	for _, name := range secretNames {
+		sdsConfigs = append(sdsConfigs, &authv3.SdsSecretConfig{
+			Name:      name,
+			SdsConfig: configSource(),
+		})
 	}
 
 	isQuic := lds.UdpListenerConfig != nil &&
@@ -913,10 +949,7 @@ func prepareSecretContext(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listene
 		quicTransport := &quicv3.QuicDownstreamTransport{
 			DownstreamTlsContext: &authv3.DownstreamTlsContext{
 				CommonTlsContext: &authv3.CommonTlsContext{
-					TlsCertificateSdsSecretConfigs: []*authv3.SdsSecretConfig{{
-						Name:      route.Spec.TLSSecretRef,
-						SdsConfig: configSource(),
-					}},
+					TlsCertificateSdsSecretConfigs: sdsConfigs,
 				},
 			},
 		}
@@ -934,10 +967,7 @@ func prepareSecretContext(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listene
 		// Setup regular TLS transport socket
 		tlsc := &authv3.DownstreamTlsContext{
 			CommonTlsContext: &authv3.CommonTlsContext{
-				TlsCertificateSdsSecretConfigs: []*authv3.SdsSecretConfig{{
-					Name:      route.Spec.TLSSecretRef,
-					SdsConfig: configSource(),
-				}},
+				TlsCertificateSdsSecretConfigs: sdsConfigs,
 			},
 		}
 		if filter.FilterChainMatch != nil && filter.FilterChainMatch.ApplicationProtocols != nil {

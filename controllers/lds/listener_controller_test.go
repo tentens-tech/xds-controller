@@ -97,6 +97,32 @@ func TestConfigSource(t *testing.T) {
 	assert.NotNil(t, result.GetAds())
 }
 
+func TestRouteTLSSecretNames(t *testing.T) {
+	t.Run("nil route", func(t *testing.T) {
+		assert.Nil(t, routeTLSSecretNames(nil))
+	})
+	t.Run("no secrets", func(t *testing.T) {
+		r := &envoyxdsv1alpha1.Route{}
+		assert.Nil(t, routeTLSSecretNames(r))
+	})
+	t.Run("tlssecret_ref only", func(t *testing.T) {
+		r := &envoyxdsv1alpha1.Route{}
+		r.Spec.TLSSecretRef = "primary"
+		assert.Equal(t, []string{"primary"}, routeTLSSecretNames(r))
+	})
+	t.Run("tlssecret_refs only", func(t *testing.T) {
+		r := &envoyxdsv1alpha1.Route{}
+		r.Spec.TLSSecretRefs = []string{"s1", "s2"}
+		assert.Equal(t, []string{"s1", "s2"}, routeTLSSecretNames(r))
+	})
+	t.Run("ref plus refs dedupes trims skips empty", func(t *testing.T) {
+		r := &envoyxdsv1alpha1.Route{}
+		r.Spec.TLSSecretRef = "a"
+		r.Spec.TLSSecretRefs = []string{"  b ", "a", ""}
+		assert.Equal(t, []string{"a", "b"}, routeTLSSecretNames(r))
+	})
+}
+
 func TestListenerStatusEqual(t *testing.T) {
 	tests := []struct {
 		name   string

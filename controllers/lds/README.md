@@ -159,13 +159,27 @@ This automatic filter chain configuration simplifies the management of filter ch
 
 ## Automatic SDS Secret Configuration
 
-In the LDS, the Secret Discovery Service (SDS) secrets can be automatically applied to the `filter_chain.transport_socket` when you set the `tlssecret_ref` field in the Route spec using the name of the desired TLSSecret CR.
+In the LDS, the Secret Discovery Service (SDS) secrets can be automatically applied to the `filter_chain.transport_socket` when you reference TLSSecret CRs from the Route spec using the name of the desired TLSSecret CR.
 
-By setting `spec.tlssecret_ref` in the Route configuration, the xDS control-plane ensures automatic application of the corresponding SDS secret to the `filter_chain.transport_socket` of the desired listener. This allows for secure communication between Envoy proxies and backend services by automatically injecting the required secrets.
+### `tlssecret_ref` (single secret)
 
-This automatic configuration simplifies the management of secrets within the LDS and eliminates manual intervention when associating secrets with the transport socket of listeners.
+By setting `spec.tlssecret_ref` to the name of a TLSSecret CR, the control plane attaches that SDS secret to the route’s filter chain transport socket on the listener.
 
-Please note that the `tlssecret_ref` field in the Route spec should match the name of the desired TLSSecret CR.
+### `tlssecret_refs` (multiple secrets)
+
+Use `spec.tlssecret_refs` when the same route’s filter chain should load more than one TLS certificate via SDS—for example, multiple `TlsCertificateSdsSecretConfigs` for SNI or additional keypairs.
+
+By setting `spec.tlssecret_ref` or `spec.tlssecret_refs` in the Route configuration, the xDS control-plane ensures automatic application of the corresponding SDS secret to the `filter_chain.transport_socket` of the desired listener. This allows for secure communication between Envoy proxies and backend services by automatically injecting the required secrets.
+
+- You can set **only** `tlssecret_refs`, **only** `tlssecret_ref`, or **both**.
+- When both are set, `tlssecret_ref` is applied **first**, then each entry in `tlssecret_refs` in list order.
+- Duplicate secret names (between the two fields or inside `tlssecret_refs`) are removed. Empty strings are skipped; surrounding whitespace on names is trimmed.
+
+This automatic configuration simplifies the management of secrets within the LDS and eliminates manual intervention when associating secrets with the transport socket of listeners. Each name must match the `metadata.name` of an existing TLSSecret CR.
+
+This automatic configuration simplifies secret management on the listener and avoids hand-editing transport sockets for TLS.
+
+Please note that the `tlssecret_ref` and `tlssecret_refs` fields in the Route spec should match the name of the desired TLSSecret CR.
 
 ## Annotations and Parameters
 
