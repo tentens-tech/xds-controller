@@ -27,7 +27,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${ARCH} go build -a \
               -X github.com/tentens-tech/xds-controller/pkg/version.BuildDate=${BUILD_DATE}" \
     -o xds /workspace/cmd/xds/main.go
 
-FROM alpine:3.23
+FROM alpine:3.24
 
 RUN apk --no-cache add ca-certificates libcrypto3 libssl3 \
     && mkdir -m 0777 /certs
