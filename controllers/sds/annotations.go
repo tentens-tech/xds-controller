@@ -24,10 +24,13 @@ import (
 
 // Annotation and label keys understood by the TLSSecret controller.
 //
-// Every key may be set either as an annotation or as a label; the annotation
-// takes precedence. Label values are limited to [-A-Za-z0-9_.] by Kubernetes,
-// which is compatible with the duration strings accepted here (e.g. "30m",
-// "168h", "1h30m").
+// The retry overrides may be set either as an annotation or as a label, with
+// the annotation taking precedence. Label values are limited to
+// [-A-Za-z0-9_.] by Kubernetes, which is compatible with the duration strings
+// accepted here (e.g. "30m", "168h", "1h30m").
+//
+// force-renew and pause are annotation-only: they trigger an action rather
+// than tune one, and labels are too easy to set in bulk for that.
 const (
 	// AnnotationForceRenew requests a new certificate on the next reconcile,
 	// bypassing the "certificate is still valid" check. The controller removes
@@ -88,7 +91,9 @@ func (p RetryPolicy) normalize() RetryPolicy {
 	if p.MaxDelay <= 0 {
 		p.MaxDelay = DefaultRetryMaxDelay
 	}
-	if p.Multiplier < 1 {
+	// NaN fails every comparison, so `< 1` alone would let it through to
+	// math.Pow and produce a garbage delay.
+	if p.Multiplier < 1 || math.IsNaN(p.Multiplier) || math.IsInf(p.Multiplier, 0) {
 		p.Multiplier = DefaultRetryMultiplier
 	}
 	if p.MaxDelay < p.BaseDelay {
@@ -106,14 +111,15 @@ func (p RetryPolicy) DelayFor(failureCount int32) time.Duration {
 		return p.BaseDelay
 	}
 
-	// Work in float64 seconds: 2^63 nanoseconds is only ~292 years, and the
-	// exponent grows fast enough to overflow an int64 for large failure counts.
-	delay := float64(p.BaseDelay/time.Second) * math.Pow(p.Multiplier, float64(failureCount-1))
-	maxDelay := float64(p.MaxDelay / time.Second)
+	// Work in float64 nanoseconds. The exponent grows fast enough to overflow
+	// an int64, but the cap below is applied before the conversion back, so
+	// time.Duration only ever sees a value under MaxDelay.
+	delay := float64(p.BaseDelay) * math.Pow(p.Multiplier, float64(failureCount-1))
+	maxDelay := float64(p.MaxDelay)
 	if math.IsInf(delay, 0) || delay >= maxDelay {
 		return p.MaxDelay
 	}
-	return time.Duration(delay) * time.Second
+	return time.Duration(delay)
 }
 
 // RetryPolicyFor resolves the retry policy for a TLSSecret. Values are read
@@ -150,6 +156,18 @@ func IsForceRenew(obj client.Object) bool {
 	return flagSet(obj, AnnotationForceRenew)
 }
 
+// annotationValue looks a key up in annotations only. The controls that take an
+// action - pause and force-renew - deliberately ignore labels: labels are used
+// for selection and bulk tooling, so an unrelated label sync should not be able
+// to suspend certificate management or trigger an ACME order.
+func annotationValue(obj client.Object, key string) (string, bool) {
+	if obj == nil {
+		return "", false
+	}
+	v, ok := obj.GetAnnotations()[key]
+	return v, ok
+}
+
 // ForceRenewRequest returns the raw value of the force-renew annotation. The
 // controller records it in status so that changing the value (for example to a
 // fresh timestamp) is recognized as a new request and clears any pending
@@ -158,7 +176,7 @@ func ForceRenewRequest(obj client.Object) string {
 	if !IsForceRenew(obj) {
 		return ""
 	}
-	v, _ := metaValue(obj, AnnotationForceRenew)
+	v, _ := annotationValue(obj, AnnotationForceRenew)
 	if v == "" {
 		// Distinguish "annotation present with empty value" from "absent".
 		return "true"
@@ -168,9 +186,9 @@ func ForceRenewRequest(obj client.Object) string {
 
 // flagSet treats the presence of an annotation as "on" unless its value parses
 // as a false boolean, so both `kubectl annotate ... pause=""` and
-// `... pause=true` enable it.
+// `... pause=true` enable it. Annotations only - see annotationValue.
 func flagSet(obj client.Object, key string) bool {
-	v, ok := metaValue(obj, key)
+	v, ok := annotationValue(obj, key)
 	if !ok {
 		return false
 	}

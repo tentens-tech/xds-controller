@@ -431,7 +431,7 @@ jobs:
               echo "✅ Cluster '$cluster_name' found"
             else
               echo "❌ Cluster '$cluster_name' NOT found"
-              ((CLUSTER_ERRORS++))
+              CLUSTER_ERRORS=$((CLUSTER_ERRORS + 1))
             fi
           done
 
@@ -474,7 +474,7 @@ jobs:
               echo "✅ Listener on $listener_addr found"
             else
               echo "❌ Listener on $listener_addr NOT found"
-              ((LISTENER_ERRORS++))
+              LISTENER_ERRORS=$((LISTENER_ERRORS + 1))
             fi
           done
 
@@ -573,7 +573,7 @@ jobs:
              test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" "x-e2e-test" "api-route" "Response header x-e2e-test"; then
             echo "TEST_COMPLEX_HTTP=✅ Passed" >> "$GITHUB_ENV"
           else
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -582,7 +582,7 @@ jobs:
              test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/api/" "x-e2e-test" "api-route" "API route response header"; then
             echo "TEST_API_ROUTE=✅ Passed" >> "$GITHUB_ENV"
           else
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -590,7 +590,7 @@ jobs:
           if test_http "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/health" "200" "Health endpoint (/health)"; then
             echo "TEST_HEALTH=✅ Passed" >> "$GITHUB_ENV"
           else
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -606,7 +606,7 @@ jobs:
             echo "TEST_CORS=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ CORS headers not found in preflight response"
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -614,7 +614,7 @@ jobs:
           if test_http_header "http://${NODE_IP}:${HTTP_COMPLEX_PORT}/" "x-lua-response" "processed" "Lua filter response header"; then
             echo "TEST_LUA=✅ Passed" >> "$GITHUB_ENV"
           else
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -626,7 +626,7 @@ jobs:
             echo "TEST_REDIRECT=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ Redirect path not matched"
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -643,7 +643,7 @@ jobs:
             echo "TEST_HTTPS=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ HTTPS route connection failed"
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -658,7 +658,7 @@ jobs:
             echo "TEST_TCP_COMPLEX=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ TCP proxy (complex) failed (status: $TCP_COMPLEX_CODE)"
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -672,7 +672,7 @@ jobs:
             echo "TEST_TCP_BASIC=✅ Passed" >> "$GITHUB_ENV"
           else
             echo "❌ TCP proxy (basic) failed (status: $TCP_BASIC_CODE)"
-            ((TEST_FAILURES++))
+            TEST_FAILURES=$((TEST_FAILURES + 1))
           fi
 
           echo ""
@@ -1352,7 +1352,19 @@ jobs:
             sleep $RETRY_INTERVAL
           done
 
-          if [[ -n "$SERIAL_BEFORE" && "$SERIAL_AFTER" == "$SERIAL_BEFORE" ]]; then
+          if [[ -z "$SERIAL_BEFORE" ]]; then
+            # Without a baseline the comparison below would silently pass,
+            # turning the strongest assertion in this step into a no-op.
+            echo "❌ Could not read the pre-renewal certificate over TLS; rotation is unverifiable"
+            kubectl logs -l app=envoy -n xds-system --tail=30 || true
+            exit 1
+          fi
+          if [[ -z "$SERIAL_AFTER" ]]; then
+            echo "❌ Could not read the post-renewal certificate over TLS"
+            kubectl logs -l app=envoy -n xds-system --tail=30 || true
+            exit 1
+          fi
+          if [[ "$SERIAL_AFTER" == "$SERIAL_BEFORE" ]]; then
             echo "❌ Envoy still serves the pre-renewal certificate (serial: $SERIAL_BEFORE)"
             kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
             exit 1
@@ -1531,9 +1543,12 @@ jobs:
           for i in $(seq 1 $MAX_RETRIES); do
             NEXT_DELAY=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
               -o jsonpath='{.status.nextRetryDelay}' 2>/dev/null || echo "")
-            if [[ "$NEXT_DELAY" == "40s" ]]; then
-              COUNT_NOW=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
-                -o jsonpath='{.status.failureCount}' 2>/dev/null || echo "")
+            COUNT_NOW=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
+              -o jsonpath='{.status.failureCount}' 2>/dev/null || echo "0")
+            # Assert escalation, not one exact value: "40s" is only visible
+            # between the 2nd and 3rd failure, and a slow runner can miss
+            # that window and see "80s" for behaviour that was correct.
+            if [[ -n "$NEXT_DELAY" && "$NEXT_DELAY" != "20s" && "$COUNT_NOW" -ge 2 ]]; then
               echo "✅ Backoff escalated: failureCount=$COUNT_NOW, nextRetryDelay=$NEXT_DELAY (attempt $i)"
               ESCALATED=true
               break
@@ -1543,7 +1558,7 @@ jobs:
           done
 
           if [[ "$ESCALATED" != "true" ]]; then
-            echo "❌ Backoff did not escalate from 20s to 40s"
+            echo "❌ Backoff did not escalate beyond the 20s base delay"
             kubectl get tlssecret e2e-backoff-cert -n xds-system -o yaml || true
             exit 1
           fi

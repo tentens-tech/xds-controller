@@ -15,6 +15,7 @@
 package sds
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -51,6 +52,40 @@ func TestRetryPolicyDelayFor(t *testing.T) {
 		{"stays capped for absurd failure counts", DefaultRetryPolicy(), 5000, 168 * time.Hour},
 		{"zero failures is treated as the first", DefaultRetryPolicy(), 0, 10 * time.Minute},
 		{"negative failures is treated as the first", DefaultRetryPolicy(), -3, 10 * time.Minute},
+		{
+			// Integer-second arithmetic used to truncate this to zero, and a
+			// zero RequeueAfter means "do not requeue" - retries stopped.
+			name:         "sub-second base delay is preserved",
+			policy:       RetryPolicy{BaseDelay: 500 * time.Millisecond, MaxDelay: time.Hour, Multiplier: 2},
+			failureCount: 2,
+			want:         time.Second,
+		},
+		{
+			name:         "sub-second base delay keeps doubling",
+			policy:       RetryPolicy{BaseDelay: 500 * time.Millisecond, MaxDelay: time.Hour, Multiplier: 2},
+			failureCount: 4,
+			want:         4 * time.Second,
+		},
+		{
+			name:         "fractional multiplier keeps precision",
+			policy:       RetryPolicy{BaseDelay: time.Minute, MaxDelay: time.Hour, Multiplier: 1.5},
+			failureCount: 3,
+			want:         135 * time.Second,
+		},
+		{
+			// NaN fails every comparison, so it used to slip past the `< 1`
+			// guard and yield a zero duration.
+			name:         "NaN multiplier falls back to the default",
+			policy:       RetryPolicy{BaseDelay: 10 * time.Minute, MaxDelay: 168 * time.Hour, Multiplier: math.NaN()},
+			failureCount: 3,
+			want:         40 * time.Minute,
+		},
+		{
+			name:         "infinite multiplier falls back to the default",
+			policy:       RetryPolicy{BaseDelay: 10 * time.Minute, MaxDelay: 168 * time.Hour, Multiplier: math.Inf(1)},
+			failureCount: 3,
+			want:         40 * time.Minute,
+		},
 		{
 			name:         "custom base and cap",
 			policy:       RetryPolicy{BaseDelay: 30 * time.Minute, MaxDelay: 2 * time.Hour, Multiplier: 2},
@@ -184,10 +219,18 @@ func TestIsPausedAndForceRenew(t *testing.T) {
 			wantRenewValue: "",
 		},
 		{
-			name:           "pause set through a label",
-			labels:         map[string]string{AnnotationPause: "true"},
-			wantPaused:     true,
+			// Labels are set in bulk by selectors and sync tooling, so they
+			// must not be able to suspend certificate management.
+			name:       "pause label does not pause",
+			labels:     map[string]string{AnnotationPause: "true"},
+			wantPaused: false,
+		},
+		{
+			// Likewise a label must never be able to trigger an ACME order.
+			name:           "force-renew label does not renew",
+			labels:         map[string]string{AnnotationForceRenew: "true"},
 			wantForceRenew: false,
+			wantRenewValue: "",
 		},
 	}
 

@@ -164,6 +164,12 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// is a fresh request, so it clears any pending backoff. An unchanged value
 	// stays subject to the backoff, otherwise a stale annotation would retry on
 	// every incoming watch event.
+	//
+	// It also gates the re-issue itself. status.forceRenewRequest is recorded
+	// once a new certificate has actually been stored, so if the follow-up
+	// patch that removes the annotation fails, the next reconcile retries only
+	// that patch. Keying off the annotation alone would place a fresh ACME
+	// order on every reconcile until the patch happened to succeed.
 	newForceRenewRequest := forceRenew && forceRenewRequest != tlsSecret.Status.ForceRenewRequest
 
 	if wait, inBackoff := backoffRemaining(&tlsSecret); inBackoff && !newForceRenewRequest {
@@ -174,7 +180,7 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	tlsSecret.Spec.SecretName = req.Name
-	sds, renewIn, expiration, err := GetSecret(reconcileCtx, &tlsSecret.Spec.DomainConfig, r.Config, forceRenew)
+	sds, renewIn, expiration, err := GetSecret(reconcileCtx, &tlsSecret.Spec.DomainConfig, r.Config, newForceRenewRequest)
 	nextRenewal := formatRenewIn(renewIn)
 
 	// Update only the annotation if it changed; avoid needless updates
@@ -245,17 +251,36 @@ func (r *TLSSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Extract certificate info for status
 	certInfo := extractCertificateInfo(sds)
 
-	// Clear the force-renew annotation only once a different certificate is in
-	// place. A dry run or a no-op renewal leaves it set so the request is not
-	// silently dropped.
-	if forceRenew && certificateChanged(tlsSecret.Status.CertificateInfo, certInfo) {
+	// servedNow: this reconcile acted on the request and a different
+	// certificate is now in place. A dry run or a no-op renewal does not count,
+	// so the request is retried rather than silently dropped.
+	servedNow := newForceRenewRequest && certificateChanged(tlsSecret.Status.CertificateInfo, certInfo)
+	// alreadyServed: an earlier reconcile issued the certificate but its
+	// annotation patch failed, so only the patch is still outstanding.
+	alreadyServed := forceRenew && forceRenewRequest == tlsSecret.Status.ForceRenewRequest
+	served := servedNow || alreadyServed
+
+	// Clear the force-renew annotation only once the request has been served.
+	if forceRenew && served {
 		if patchErr := r.clearForceRenew(ctx, &tlsSecret); patchErr != nil {
-			log.Error(patchErr, "failed to clear force-renew annotation")
+			// The annotation stays; the next reconcile retries the patch alone,
+			// without placing another ACME order.
+			log.Error(patchErr, "failed to clear force-renew annotation, will retry")
 		} else {
+			fingerprint := ""
+			if certInfo != nil {
+				fingerprint = certInfo.Fingerprint
+			}
 			log.V(0).Info("force renew completed, annotation removed",
-				"fingerprint", certInfo.Fingerprint)
+				"fingerprint", fingerprint)
 			forceRenewRequest = ""
 		}
+	}
+
+	// Only a served request is recorded, so a dry run or a failed issue does
+	// not consume it.
+	if forceRenew && !served {
+		forceRenewRequest = tlsSecret.Status.ForceRenewRequest
 	}
 
 	sds.Name = tlsSecret.Name

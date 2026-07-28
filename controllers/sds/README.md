@@ -278,13 +278,17 @@ SDS uses [lego](https://github.com/go-acme/lego) for ACME certificate management
 
 ### Operational Annotations and Labels
 
-These keys control the controller's behaviour for a single `TLSSecret`. Each one may be set
-either as an annotation or as a label; the annotation wins when both are present.
+These keys control the controller's behaviour for a single `TLSSecret`.
+
+`force-renew` and `pause` are **annotation-only** — they trigger an action rather than tune
+one, and labels are too easily applied in bulk by selectors and sync tooling for that. The
+retry overrides accept either an annotation or a label; the annotation wins when both are
+present.
 
 | Key | Kind | Default | Meaning |
 | --- | ---- | ------- | ------- |
-| `envoyxds.io/force-renew` | annotation | unset | Request a new certificate on the next reconcile, even if the stored one is still valid. |
-| `envoyxds.io/pause` | annotation | unset | Suspend all certificate operations for this resource. |
+| `envoyxds.io/force-renew` | annotation only | unset | Request a new certificate on the next reconcile, even if the stored one is still valid. |
+| `envoyxds.io/pause` | annotation only | unset | Suspend all certificate operations for this resource. |
 | `envoyxds.io/retry-base-delay` | label or annotation | `10m` | Wait before the first retry after a failed certificate operation. |
 | `envoyxds.io/retry-max-delay` | label or annotation | `168h` | Upper bound of the exponential backoff. |
 | `envoyxds.io/retry-multiplier` | label or annotation | `2` | Growth factor of the backoff. |

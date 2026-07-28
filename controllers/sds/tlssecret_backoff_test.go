@@ -560,6 +560,50 @@ func TestReconcileForceRenewIssuesNewCertificateAndClearsAnnotation(t *testing.T
 	assert.EqualValues(t, 0, renewed.Status.FailureCount)
 }
 
+func TestReconcileForceRenewIsServedOnlyOnce(t *testing.T) {
+	// If the patch that removes the annotation fails, the request must not be
+	// re-issued on every subsequent reconcile. For an ACME secret each re-issue
+	// is a real order against Let's Encrypt, which is exactly what the backoff
+	// work is meant to avoid.
+	tlsSecret := testTLSSecret(nil)
+	tlsSecret.Spec.Config = xdstypes.StorageConfig{
+		Type:                    xdstypes.Kubernetes,
+		KubernetesStorageConfig: &xdstypes.KubernetesStorageConfig{Namespace: "default", SecretName: "my-cert"},
+	}
+	r := newTestReconciler(t, tlsSecret)
+	r.Config.SetLeaderStatus(true)
+	ctx := context.Background()
+
+	_, err := r.Reconcile(ctx, testRequest)
+	require.NoError(t, err)
+
+	var issued envoyxdsv1alpha1.TLSSecret
+	require.NoError(t, r.Get(ctx, testRequest.NamespacedName, &issued))
+	require.NotNil(t, issued.Status.CertificateInfo)
+
+	// Simulate the state left behind by a successful issue whose annotation
+	// patch did not land: the annotation is still set and status records the
+	// request as served.
+	issued.Annotations[AnnotationForceRenew] = "true"
+	require.NoError(t, r.Update(ctx, &issued))
+	require.NoError(t, r.Get(ctx, testRequest.NamespacedName, &issued))
+	issued.Status.ForceRenewRequest = "true"
+	require.NoError(t, r.Status().Update(ctx, &issued))
+	servedFingerprint := issued.Status.CertificateInfo.Fingerprint
+
+	_, err = r.Reconcile(ctx, testRequest)
+	require.NoError(t, err)
+
+	var after envoyxdsv1alpha1.TLSSecret
+	require.NoError(t, r.Get(ctx, testRequest.NamespacedName, &after))
+
+	require.NotNil(t, after.Status.CertificateInfo)
+	assert.Equal(t, servedFingerprint, after.Status.CertificateInfo.Fingerprint,
+		"an already served force-renew must not issue another certificate")
+	assert.NotContains(t, after.Annotations, AnnotationForceRenew,
+		"the outstanding annotation removal must still be retried")
+}
+
 func TestReconcileForceRenewKeptOnFailure(t *testing.T) {
 	tlsSecret := failingTLSSecret(map[string]string{AnnotationForceRenew: "true"})
 	r := newFailingReconciler(t, tlsSecret)

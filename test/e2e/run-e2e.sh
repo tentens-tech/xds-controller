@@ -632,7 +632,15 @@ ROUTEEOF
             sleep $sds_interval
         done
 
-        if [[ -n "$wildcard_serial_before" && "$wildcard_serial_after" == "$wildcard_serial_before" ]]; then
+        if [[ -z "$wildcard_serial_before" ]]; then
+            # Without a baseline the comparison below would silently pass,
+            # turning the strongest assertion in this step into a no-op.
+            log_error "✗ Could not read the pre-renewal certificate over TLS; rotation is unverifiable"
+            test_failures=$((test_failures + 1))
+        elif [[ -z "$wildcard_serial_after" ]]; then
+            log_error "✗ Could not read the post-renewal certificate over TLS"
+            test_failures=$((test_failures + 1))
+        elif [[ "$wildcard_serial_after" == "$wildcard_serial_before" ]]; then
             log_error "✗ Envoy still serves the pre-renewal certificate (serial: $wildcard_serial_before)"
             test_failures=$((test_failures + 1))
         fi
@@ -784,10 +792,13 @@ BACKOFFEOF
             local next_delay
             next_delay=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
                 -o jsonpath='{.status.nextRetryDelay}' 2>/dev/null || echo "")
-            if [[ "$next_delay" == "40s" ]]; then
-                local failures_now
-                failures_now=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
-                    -o jsonpath='{.status.failureCount}' 2>/dev/null || echo "")
+            local failures_now
+            failures_now=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
+                -o jsonpath='{.status.failureCount}' 2>/dev/null || echo "0")
+            # Assert escalation, not one exact value: "40s" is only visible
+            # between the 2nd and 3rd failure, and a slow runner can miss that
+            # window and see "80s" for behaviour that was correct.
+            if [[ -n "$next_delay" && "$next_delay" != "20s" && "${failures_now:-0}" -ge 2 ]]; then
                 log_info "✓ Backoff escalated: failureCount=$failures_now, nextRetryDelay=$next_delay (attempt $i)"
                 escalated=true
                 break
@@ -796,7 +807,7 @@ BACKOFFEOF
         done
 
         if [[ "$escalated" != "true" ]]; then
-            log_error "✗ Backoff did not escalate from 20s to 40s"
+            log_error "✗ Backoff did not escalate beyond the 20s base delay"
             kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
                 -o jsonpath='{.status.failureCount} {.status.nextRetryDelay}' || true
             echo ""
