@@ -18,13 +18,17 @@ package err
 import "errors"
 
 var (
-	ErrDomainConfigNotFound   = errors.New("domain configs not found, waiting")
-	ErrManualCertNotFound     = errors.New("certificate not found and is manual, skipping %s")
-	ErrGetCert                = errors.New("get cert error: %s")
-	ErrReadCert               = errors.New("read cert error: %s")
-	ErrWriteCert              = errors.New("write cert error: %s")
+	ErrDomainConfigNotFound = errors.New("domain configs not found, waiting")
+	// These are used as prefixes in fmt.Errorf(Err....Error()+": %w", err).
+	// They must not contain verbs of their own: a stray %s consumes the
+	// argument meant for %w, which leaves the cause unwrapped and makes
+	// errors.Is against the underlying error fail.
+	ErrManualCertNotFound     = errors.New("certificate not found and is manual, skipping")
+	ErrGetCert                = errors.New("get cert error")
+	ErrReadCert               = errors.New("read cert error")
+	ErrWriteCert              = errors.New("write cert error")
 	ErrBadKeyData             = errors.New("bad key data: not PEM-encoded")
-	ErrCertType               = errors.New("ERROR: cert type: %s")
+	ErrCertType               = errors.New("cert type invalid")
 	ErrCertNotFound           = errors.New("cert not found")
 	ErrCertNil                = errors.New("cert config is nil")
 	ErrVaultNotConfigured     = errors.New("vault not configured")
@@ -33,4 +37,5 @@ var (
 	ErrNoResourcesFound       = errors.New("no resources found")
 	ErrServiceBusy            = errors.New("service busy")
 	ErrRateLimited            = errors.New("rate limited")
+	ErrLetsEncryptAccount     = errors.New("lets encrypt account key invalid")
 )

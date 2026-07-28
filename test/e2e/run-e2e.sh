@@ -216,21 +216,21 @@ run_tests() {
     
     # Test 1: Basic route via original listener (port 8080)
     log_info "--- Test: Basic route (original listener) ---"
-    test_http_request "http://${node_ip}:${envoy_http_port}/" "200" "Basic route on port 8080" || ((test_failures++))
+    test_http_request "http://${node_ip}:${envoy_http_port}/" "200" "Basic route on port 8080" || test_failures=$((test_failures + 1))
     
     # Test 2: Complex route via complex listener (port 8081)
     log_info "--- Test: Complex route (complex listener) ---"
-    test_http_request "http://${node_ip}:${envoy_http_complex_port}/" "200" "Complex route on port 8081" || ((test_failures++))
-    test_http_header "http://${node_ip}:${envoy_http_complex_port}/" "x-e2e-test" "api-route" "Response header x-e2e-test" || ((test_failures++))
+    test_http_request "http://${node_ip}:${envoy_http_complex_port}/" "200" "Complex route on port 8081" || test_failures=$((test_failures + 1))
+    test_http_header "http://${node_ip}:${envoy_http_complex_port}/" "x-e2e-test" "api-route" "Response header x-e2e-test" || test_failures=$((test_failures + 1))
     
     # Test 3: API route (/api/) via complex listener
     log_info "--- Test: API route ---"
-    test_http_request "http://${node_ip}:${envoy_http_complex_port}/api/" "200" "API route (/api/)" || ((test_failures++))
-    test_http_header "http://${node_ip}:${envoy_http_complex_port}/api/" "x-e2e-test" "api-route" "API route response header" || ((test_failures++))
+    test_http_request "http://${node_ip}:${envoy_http_complex_port}/api/" "200" "API route (/api/)" || test_failures=$((test_failures + 1))
+    test_http_header "http://${node_ip}:${envoy_http_complex_port}/api/" "x-e2e-test" "api-route" "API route response header" || test_failures=$((test_failures + 1))
     
     # Test 4: Health endpoint via complex listener
     log_info "--- Test: Health endpoint ---"
-    test_http_request "http://${node_ip}:${envoy_http_complex_port}/health" "200" "Health endpoint (/health)" || ((test_failures++))
+    test_http_request "http://${node_ip}:${envoy_http_complex_port}/health" "200" "Health endpoint (/health)" || test_failures=$((test_failures + 1))
     
     # Test 5: CORS preflight request
     log_info "--- Test: CORS preflight ---"
@@ -245,7 +245,7 @@ run_tests() {
         log_info "✓ CORS headers present in preflight response"
     else
         log_warn "✗ CORS headers not found in preflight response"
-        ((test_failures++))
+        test_failures=$((test_failures + 1))
     fi
     
     # Test 6: Request with custom headers (verify they pass through)
@@ -259,7 +259,7 @@ run_tests() {
         log_info "✓ Request with custom headers succeeded"
     else
         log_warn "✗ Request with custom headers failed"
-        ((test_failures++))
+        test_failures=$((test_failures + 1))
     fi
     
     # Test 6: HTTPS route (with self-signed cert - use -k to skip validation)
@@ -284,7 +284,7 @@ run_tests() {
             log_info "✓ HTTPS/TLS working (status: $https_code)"
         else
             log_warn "✗ HTTPS route connection failed"
-            ((test_failures++))
+            test_failures=$((test_failures + 1))
         fi
     fi
     
@@ -298,12 +298,12 @@ run_tests() {
         log_info "✓ Redirect working (301 response)"
     else
         log_warn "⚠ Redirect path not matched"
-        ((test_failures++))
+        test_failures=$((test_failures + 1))
     fi
     
     # Test 8: Check Lua filter adds response header
     log_info "--- Test: Lua filter response header ---"
-    test_http_header "http://${node_ip}:${envoy_http_complex_port}/" "x-lua-response" "processed" "Lua filter response header" || ((test_failures++))
+    test_http_header "http://${node_ip}:${envoy_http_complex_port}/" "x-lua-response" "processed" "Lua filter response header" || test_failures=$((test_failures + 1))
     
     # Step 14: Verify config dump has all expected components
     log_info "Step 14: Verifying config structure..."
@@ -452,7 +452,7 @@ ROUTEEOF
 
     if [[ "$initial_verified" != "true" ]]; then
         log_error "✗ TLSSecret did not load initial K8s Secret certificate"
-        ((test_failures++))
+        test_failures=$((test_failures + 1))
     fi
 
     # Verify Envoy serves the initial cert (hard gate via HTTPS handshake)
@@ -477,7 +477,7 @@ ROUTEEOF
 
     if [[ "$served_serial_before" != "$initial_serial" ]]; then
         log_error "✗ Envoy did not serve the initial certificate (expected serial: $initial_serial, got: $served_serial_before)"
-        ((test_failures++))
+        test_failures=$((test_failures + 1))
     fi
 
     # Generate updated cert and update K8s Secret
@@ -517,7 +517,7 @@ ROUTEEOF
 
     if [[ "$update_verified" != "true" ]]; then
         log_error "✗ TLSSecret was NOT reconciled after K8s Secret update"
-        ((test_failures++))
+        test_failures=$((test_failures + 1))
     fi
 
     # Verify Envoy serves the updated cert (hard gate via HTTPS handshake)
@@ -547,9 +547,326 @@ ROUTEEOF
 
     if [[ "$served_serial_after" != "$updated_serial" ]]; then
         log_error "✗ Envoy did not serve the updated certificate (expected serial: $updated_serial, got: $served_serial_after)"
-        ((test_failures++))
+        test_failures=$((test_failures + 1))
     else
         log_info "✓ Envoy TLS handshake confirms certificate was rotated"
+    fi
+
+    # Step 18: Force renew via annotation
+    log_info "Step 18: Testing force-renew annotation (envoyxds.io/force-renew)..."
+
+    local wildcard_fp_before=""
+    for i in $(seq 1 $sds_retries); do
+        wildcard_fp_before=$(kubectl get tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+        [[ -n "$wildcard_fp_before" ]] && break
+        sleep $sds_interval
+    done
+
+    if [[ -z "$wildcard_fp_before" ]]; then
+        log_error "✗ e2e-wildcard-cert never reported a certificate fingerprint"
+        test_failures=$((test_failures + 1))
+    else
+        log_info "Self-signed cert fingerprint before force-renew: $wildcard_fp_before"
+
+        local wildcard_serial_before
+        wildcard_serial_before=$(echo | openssl s_client -servername secure.e2e.local \
+            -connect "${node_ip}:${envoy_https_port}" 2>/dev/null \
+            | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+
+        kubectl annotate tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+            envoyxds.io/force-renew=true --overwrite
+        log_info "force-renew annotation applied"
+
+        local renew_verified=false
+        local wildcard_fp_after=""
+        for i in $(seq 1 $sds_retries); do
+            wildcard_fp_after=$(kubectl get tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+                -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+
+            if [[ -n "$wildcard_fp_after" && "$wildcard_fp_after" != "$wildcard_fp_before" ]]; then
+                log_info "✓ force-renew issued a new certificate (attempt $i)"
+                log_info "  $wildcard_fp_before -> $wildcard_fp_after"
+                renew_verified=true
+                break
+            fi
+            sleep $sds_interval
+        done
+
+        if [[ "$renew_verified" != "true" ]]; then
+            log_error "✗ force-renew did not produce a new certificate"
+            test_failures=$((test_failures + 1))
+        fi
+
+        # The annotation must be cleared only after the new cert is stored.
+        local leftover_annotation
+        leftover_annotation=$(kubectl get tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+            -o jsonpath='{.metadata.annotations.envoyxds\.io/force-renew}' 2>/dev/null || echo "")
+        if [[ -z "$leftover_annotation" ]]; then
+            log_info "✓ force-renew annotation was removed after success"
+        else
+            log_error "✗ force-renew annotation still present after a successful renewal"
+            test_failures=$((test_failures + 1))
+        fi
+
+        local renewed_at
+        renewed_at=$(kubectl get tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+            -o jsonpath='{.metadata.annotations.envoyxds\.io/force-renewed-at}' 2>/dev/null || echo "")
+        if [[ -n "$renewed_at" ]]; then
+            log_info "✓ force-renewed-at recorded: $renewed_at"
+        else
+            log_warn "⚠ force-renewed-at annotation not set"
+        fi
+
+        # Envoy must actually pick up the rotated certificate.
+        local wildcard_serial_after=""
+        for i in $(seq 1 $sds_retries); do
+            wildcard_serial_after=$(echo | openssl s_client -servername secure.e2e.local \
+                -connect "${node_ip}:${envoy_https_port}" 2>/dev/null \
+                | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+
+            if [[ -n "$wildcard_serial_after" && "$wildcard_serial_after" != "$wildcard_serial_before" ]]; then
+                log_info "✓ Envoy is serving the force-renewed cert (serial: $wildcard_serial_after)"
+                break
+            fi
+            sleep $sds_interval
+        done
+
+        if [[ -z "$wildcard_serial_before" ]]; then
+            # Without a baseline the comparison below would silently pass,
+            # turning the strongest assertion in this step into a no-op.
+            log_error "✗ Could not read the pre-renewal certificate over TLS; rotation is unverifiable"
+            test_failures=$((test_failures + 1))
+        elif [[ -z "$wildcard_serial_after" ]]; then
+            log_error "✗ Could not read the post-renewal certificate over TLS"
+            test_failures=$((test_failures + 1))
+        elif [[ "$wildcard_serial_after" == "$wildcard_serial_before" ]]; then
+            log_error "✗ Envoy still serves the pre-renewal certificate (serial: $wildcard_serial_before)"
+            test_failures=$((test_failures + 1))
+        fi
+    fi
+
+    # Step 19: Pause annotation
+    log_info "Step 19: Testing pause annotation (envoyxds.io/pause)..."
+
+    kubectl annotate tlssecret e2e-k8s-ref-cert -n "$NAMESPACE" \
+        envoyxds.io/pause=true --overwrite
+
+    local paused_verified=false
+    for i in $(seq 1 $sds_retries); do
+        local paused
+        paused=$(kubectl get tlssecret e2e-k8s-ref-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.paused}' 2>/dev/null || echo "")
+        if [[ "$paused" == "true" ]]; then
+            log_info "✓ TLSSecret reports status.paused=true (attempt $i)"
+            paused_verified=true
+            break
+        fi
+        sleep $sds_interval
+    done
+
+    if [[ "$paused_verified" != "true" ]]; then
+        log_error "✗ TLSSecret did not report status.paused after annotation"
+        test_failures=$((test_failures + 1))
+    fi
+
+    # Change the underlying K8s Secret while paused; it must be ignored.
+    openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-paused.key -out /tmp/tls-paused.crt \
+        -days 365 -nodes -subj "/CN=k8sref.e2e.local/O=Paused" \
+        -addext "subjectAltName=DNS:k8sref.e2e.local" 2>/dev/null
+
+    local paused_fingerprint
+    paused_fingerprint=$(openssl x509 -in /tmp/tls-paused.crt -fingerprint -sha256 -noout \
+        | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+
+    kubectl create secret tls e2e-k8s-tls-data \
+        --cert=/tmp/tls-paused.crt \
+        --key=/tmp/tls-paused.key \
+        -n "$NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    log_info "K8s Secret updated while paused (fingerprint: $paused_fingerprint)"
+
+    # Give the controller several reconcile intervals to (incorrectly) pick it up.
+    sleep 30
+
+    local fp_while_paused
+    fp_while_paused=$(kubectl get tlssecret e2e-k8s-ref-cert -n "$NAMESPACE" \
+        -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+
+    if [[ "$fp_while_paused" == "$paused_fingerprint" ]]; then
+        log_error "✗ Paused TLSSecret still reconciled the K8s Secret change"
+        test_failures=$((test_failures + 1))
+    else
+        log_info "✓ Paused TLSSecret ignored the K8s Secret change"
+    fi
+
+    # Unpause and confirm it catches up.
+    kubectl annotate tlssecret e2e-k8s-ref-cert -n "$NAMESPACE" envoyxds.io/pause-
+    log_info "pause annotation removed"
+
+    local resume_verified=false
+    for i in $(seq 1 $sds_retries); do
+        local fp_resumed
+        fp_resumed=$(kubectl get tlssecret e2e-k8s-ref-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+        if [[ "$fp_resumed" == "$paused_fingerprint" ]]; then
+            log_info "✓ Reconciliation resumed after the annotation was removed (attempt $i)"
+            resume_verified=true
+            break
+        fi
+        sleep $sds_interval
+    done
+
+    if [[ "$resume_verified" != "true" ]]; then
+        log_error "✗ TLSSecret did not resume after the pause annotation was removed"
+        test_failures=$((test_failures + 1))
+    fi
+
+    # Step 20: Failure backoff with per-secret tuning
+    log_info "Step 20: Testing failure backoff (envoyxds.io/retry-base-delay)..."
+
+    # Local storage under /dev/null can never be read or created, so every
+    # reconcile fails deterministically without any outbound network call.
+    cat <<'BACKOFFEOF' | kubectl apply -f -
+    apiVersion: envoyxds.io/v1alpha1
+    kind: TLSSecret
+    metadata:
+      name: e2e-backoff-cert
+      namespace: xds-system
+      annotations:
+        clusters: "e2e-test"
+        nodes: "e2e-test-node"
+      labels:
+        envoyxds.io/retry-base-delay: 20s
+        envoyxds.io/retry-max-delay: 5m
+    spec:
+      domains:
+        - "backoff.e2e.local"
+      config:
+        type: Local
+        local_config:
+          path: /dev/null/certs
+BACKOFFEOF
+
+    local first_failure_verified=false
+    for i in $(seq 1 $sds_retries); do
+        local failures
+        failures=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.failureCount}' 2>/dev/null || echo "")
+        if [[ -n "$failures" && "$failures" -ge 1 ]]; then
+            log_info "✓ Failure recorded: status.failureCount=$failures (attempt $i)"
+            first_failure_verified=true
+            break
+        fi
+        sleep $sds_interval
+    done
+
+    if [[ "$first_failure_verified" != "true" ]]; then
+        log_error "✗ Failing TLSSecret never recorded a failure count"
+        kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" -o yaml || true
+        test_failures=$((test_failures + 1))
+    else
+        local retry_delay backoff_until
+        retry_delay=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.nextRetryDelay}' 2>/dev/null || echo "")
+        backoff_until=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.backoffUntil}' 2>/dev/null || echo "")
+
+        if [[ "$retry_delay" == "20s" ]]; then
+            log_info "✓ Per-secret retry-base-delay label honored (nextRetryDelay=$retry_delay)"
+        else
+            log_error "✗ Expected nextRetryDelay=20s from the label, got '$retry_delay'"
+            test_failures=$((test_failures + 1))
+        fi
+
+        if [[ -n "$backoff_until" ]]; then
+            log_info "✓ status.backoffUntil recorded: $backoff_until"
+        else
+            log_error "✗ status.backoffUntil was not recorded"
+            test_failures=$((test_failures + 1))
+        fi
+
+        # The wait must double on the next failure.
+        local escalated=false
+        for i in $(seq 1 $sds_retries); do
+            local next_delay
+            next_delay=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
+                -o jsonpath='{.status.nextRetryDelay}' 2>/dev/null || echo "")
+            local failures_now
+            failures_now=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
+                -o jsonpath='{.status.failureCount}' 2>/dev/null || echo "0")
+            # Assert escalation, not one exact value: "40s" is only visible
+            # between the 2nd and 3rd failure, and a slow runner can miss that
+            # window and see "80s" for behaviour that was correct.
+            if [[ -n "$next_delay" && "$next_delay" != "20s" && "${failures_now:-0}" -ge 2 ]]; then
+                log_info "✓ Backoff escalated: failureCount=$failures_now, nextRetryDelay=$next_delay (attempt $i)"
+                escalated=true
+                break
+            fi
+            sleep $sds_interval
+        done
+
+        if [[ "$escalated" != "true" ]]; then
+            log_error "✗ Backoff did not escalate beyond the 20s base delay"
+            kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
+                -o jsonpath='{.status.failureCount} {.status.nextRetryDelay}' || true
+            echo ""
+            test_failures=$((test_failures + 1))
+        fi
+
+        # A failure must not blank the reported state, and must surface as a condition.
+        local error_condition
+        error_condition=$(kubectl get tlssecret e2e-backoff-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Error")].status}' 2>/dev/null || echo "")
+        if [[ "$error_condition" == "True" ]]; then
+            log_info "✓ Error condition reported"
+        else
+            log_error "✗ Error condition not set on a failing TLSSecret (got '$error_condition')"
+            test_failures=$((test_failures + 1))
+        fi
+    fi
+
+    kubectl delete tlssecret e2e-backoff-cert -n "$NAMESPACE" --ignore-not-found
+
+    # Step 21: Status freshness
+    log_info "Step 21: Verifying status.lastReconciled keeps advancing..."
+
+    local reconciled_before
+    reconciled_before=$(kubectl get tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+        -o jsonpath='{.status.lastReconciled}' 2>/dev/null || echo "")
+    log_info "lastReconciled before: $reconciled_before"
+
+    # The controller runs with --statusRefreshInterval=20s in this environment,
+    # so the timestamp must move even though renewal is a year away.
+    local freshness_verified=false
+    for i in $(seq 1 $sds_retries); do
+        sleep $sds_interval
+        local reconciled_now
+        reconciled_now=$(kubectl get tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+            -o jsonpath='{.status.lastReconciled}' 2>/dev/null || echo "")
+        if [[ -n "$reconciled_now" && "$reconciled_now" != "$reconciled_before" ]]; then
+            log_info "✓ lastReconciled advanced: $reconciled_before -> $reconciled_now (attempt $i)"
+            freshness_verified=true
+            break
+        fi
+    done
+
+    if [[ "$freshness_verified" != "true" ]]; then
+        log_error "✗ status.lastReconciled did not advance; status would go stale"
+        test_failures=$((test_failures + 1))
+    fi
+
+    local days_left
+    days_left=$(kubectl get tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+        -o jsonpath='{.status.certificateInfo.daysUntilExpiry}' 2>/dev/null || echo "")
+    local next_renewal
+    next_renewal=$(kubectl get tlssecret e2e-wildcard-cert -n "$NAMESPACE" \
+        -o jsonpath='{.status.nextRenewal}' 2>/dev/null || echo "")
+    if [[ -n "$days_left" && -n "$next_renewal" ]]; then
+        log_info "✓ Status reports daysUntilExpiry=$days_left nextRenewal='$next_renewal'"
+    else
+        log_error "✗ Status is missing daysUntilExpiry or nextRenewal"
+        test_failures=$((test_failures + 1))
     fi
 
     # Summary

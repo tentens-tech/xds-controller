@@ -334,6 +334,24 @@ type Config struct {
 	// If countdown in minutes will be lesser than this value, it will try to renew certificate
 	RenewBeforeExpireInMinutes int `yaml:"RenewBeforeExpireInMinutes"`
 
+	// StatusRefreshInterval caps how long a TLSSecret may go without being
+	// reconciled. Without it the requeue delay equals the full time until
+	// renewal (up to two months), leaving status fields such as
+	// daysUntilExpiry and lastReconciled stale for that whole period.
+	StatusRefreshInterval time.Duration `yaml:"StatusRefreshInterval"`
+
+	// RetryBaseDelay is the wait before the first retry after a failed
+	// certificate operation. Per-resource overrides are read from the
+	// envoyxds.io/retry-base-delay annotation or label.
+	RetryBaseDelay time.Duration `yaml:"RetryBaseDelay"`
+
+	// RetryMaxDelay caps the exponential backoff between failed certificate
+	// operations.
+	RetryMaxDelay time.Duration `yaml:"RetryMaxDelay"`
+
+	// RetryMultiplier is the growth factor of the backoff between failures.
+	RetryMultiplier float64 `yaml:"RetryMultiplier"`
+
 	RndNumber int
 
 	NodeID      string

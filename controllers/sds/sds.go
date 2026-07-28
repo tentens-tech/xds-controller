@@ -36,10 +36,11 @@ import (
 // ErrK8sClientNotConfigured is returned when trying to use Kubernetes storage without a configured client
 var ErrK8sClientNotConfigured = xdserr.ErrK8sClientNotConfigured
 
-var defaultDuration time.Duration = 10 * time.Minute
+var defaultDuration = 10 * time.Minute
 
-// GetSecret retrieves a secret for the given domain.
-func GetSecret(ctx context.Context, domain *xdstypes.DomainConfig, x *xds.Config) (*auth.Secret, time.Duration, time.Time, error) {
+// GetSecret retrieves a secret for the given domain. When forceRenew is set a
+// new certificate is requested even if the stored one is still valid.
+func GetSecret(ctx context.Context, domain *xdstypes.DomainConfig, x *xds.Config, forceRenew bool) (*auth.Secret, time.Duration, time.Time, error) {
 	log := ctrllog.FromContext(ctx)
 	var cg xds.CertGetter
 
@@ -92,13 +93,11 @@ func GetSecret(ctx context.Context, domain *xdstypes.DomainConfig, x *xds.Config
 
 		// Determine cert getter: Let's Encrypt if challenge is specified, otherwise self-signed
 		if domain.Challenge != nil {
-			if x.LeClient == nil {
-				x.LeClient = xds.NewLEA(
-					x.LetsEncryptAccount.Email,
-					x.LetsEncryptAccount.PrivateKeyBase64,
-				)
+			le, err := x.EnsureLEClient()
+			if err != nil {
+				return nil, defaultDuration, time.Time{}, err
 			}
-			cg = x.LeClient
+			cg = le
 		} else {
 			cg = xds.NewSelfSigned()
 		}
@@ -149,16 +148,14 @@ func GetSecret(ctx context.Context, domain *xdstypes.DomainConfig, x *xds.Config
 		}
 
 		// Use existing client or create new one
-		if x.LeClient == nil {
-			x.LeClient = xds.NewLEA(
-				x.LetsEncryptAccount.Email,
-				x.LetsEncryptAccount.PrivateKeyBase64,
-			)
+		le, err := x.EnsureLEClient()
+		if err != nil {
+			return nil, defaultDuration, time.Time{}, err
 		}
-		cg = x.LeClient
+		cg = le
 	}
 
-	secret, generateBeforeExpiration, expireTime, err := makeSecret(ctx, domain, x, cg, x.IsLeaderInstance())
+	secret, generateBeforeExpiration, expireTime, err := makeSecret(ctx, domain, x, cg, x.IsLeaderInstance(), forceRenew)
 	if err != nil {
 		return nil, generateBeforeExpiration, expireTime, err
 	}
@@ -166,7 +163,7 @@ func GetSecret(ctx context.Context, domain *xdstypes.DomainConfig, x *xds.Config
 	return secret, generateBeforeExpiration, expireTime, err
 }
 
-func makeSecret(ctx context.Context, d *xdstypes.DomainConfig, x xds.GlobalConfig, cg xds.CertGetter, isLeader bool) (*auth.Secret, time.Duration, time.Time, error) {
+func makeSecret(ctx context.Context, d *xdstypes.DomainConfig, x xds.GlobalConfig, cg xds.CertGetter, isLeader, forceRenew bool) (*auth.Secret, time.Duration, time.Time, error) {
 	log := ctrllog.FromContext(ctx)
 	s := &auth.Secret{Name: d.SecretName}
 	var cert xdstypes.Cert
@@ -221,27 +218,24 @@ func makeSecret(ctx context.Context, d *xdstypes.DomainConfig, x xds.GlobalConfi
 
 		cert, err = cg.Get(d)
 		if err != nil {
-			if strings.Contains(err.Error(), "zone could not be found") {
+			// Every branch below returns the error rather than swallowing it.
+			// `s` carries no certificate at this point (we are in the
+			// cert-not-found path), so reporting success here would publish an
+			// empty secret to Envoy and mark the resource Active. The caller
+			// applies its retry backoff based on the returned error.
+			if strings.Contains(err.Error(), "zone could not be found") ||
+				strings.Contains(err.Error(), xdserr.ErrCustomEnvReplace.Error()) ||
+				strings.Contains(err.Error(), "is not set") {
 				log.V(0).Info(err.Error())
-				return s, defaultDuration, time.Time{}, nil
-			}
-
-			if strings.Contains(err.Error(), xdserr.ErrCustomEnvReplace.Error()) {
-				log.V(0).Info(err.Error())
-				return s, defaultDuration, time.Time{}, nil
-			}
-
-			if strings.Contains(err.Error(), "is not set") {
-				log.V(0).Info(err.Error())
-				return s, defaultDuration, time.Time{}, nil
+				return s, defaultDuration, time.Time{}, err
 			}
 
 			if errors.Is(err, xdserr.ErrServiceBusy) {
-				return s, defaultDuration, time.Time{}, nil
+				return s, defaultDuration, time.Time{}, xdserr.ErrServiceBusy
 			}
 
 			if errors.Is(err, xdserr.ErrRateLimited) {
-				return s, 120 * time.Minute, time.Time{}, nil
+				return s, defaultDuration, time.Time{}, xdserr.ErrRateLimited
 			}
 
 			return s, defaultDuration, time.Time{}, fmt.Errorf(xdserr.ErrGetCert.Error()+": %w", err)
@@ -290,6 +284,14 @@ func makeSecret(ctx context.Context, d *xdstypes.DomainConfig, x xds.GlobalConfi
 	if d.Config.Type == xdstypes.Local {
 		forceRegenerate = false
 	}
+
+	// An explicit force-renew request wins over every heuristic above, except
+	// for manual challenges where the certificate is supplied out of band.
+	if forceRenew && (d.Challenge == nil || d.Challenge.ChallengeType != xdstypes.MANUAL) {
+		log.V(0).Info("force renew requested", "secretName", d.SecretName)
+		forceRegenerate = true
+	}
+
 	minutesUntilExpire := time.Until(x509Cert.NotAfter).Minutes()
 
 	if forceRegenerate || (minutesUntilExpire <= renewBeforeExpireMinutes && (d.Challenge == nil || d.Challenge.ChallengeType != xdstypes.MANUAL)) {
@@ -362,8 +364,10 @@ func makeSecret(ctx context.Context, d *xdstypes.DomainConfig, x xds.GlobalConfi
 				return oldSecret, defaultDuration, time.Time{}, xdserr.ErrServiceBusy
 			}
 
+			// The wait between retries is owned by the controller's per-resource
+			// backoff, so no special-case duration is returned here.
 			if errors.Is(err, xdserr.ErrRateLimited) {
-				return oldSecret, 120 * time.Minute, time.Time{}, xdserr.ErrRateLimited
+				return oldSecret, defaultDuration, time.Time{}, xdserr.ErrRateLimited
 			}
 
 			return oldSecret, defaultDuration, time.Time{}, fmt.Errorf(xdserr.ErrGetCert.Error()+": %w", err)

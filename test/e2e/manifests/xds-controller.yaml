@@ -58,6 +58,10 @@ spec:
         - name: xds-controller
           image: xds-controller:e2e
           imagePullPolicy: Never
+          args:
+            # Short refresh so the E2E run can observe status.lastReconciled
+            # advancing; production defaults to 1h.
+            - --statusRefreshInterval=20s
           ports:
             - containerPort: 18000
               name: xds-grpc

@@ -276,6 +276,118 @@ SDS uses [lego](https://github.com/go-acme/lego) for ACME certificate management
 
   - `base64_ca_key`: Your Root CA Key in base64 string, must be assigned with cert.
 
+### Operational Annotations and Labels
+
+These keys control the controller's behaviour for a single `TLSSecret`.
+
+`force-renew` and `pause` are **annotation-only** — they trigger an action rather than tune
+one, and labels are too easily applied in bulk by selectors and sync tooling for that. The
+retry overrides accept either an annotation or a label; the annotation wins when both are
+present.
+
+| Key | Kind | Default | Meaning |
+| --- | ---- | ------- | ------- |
+| `envoyxds.io/force-renew` | annotation only | unset | Request a new certificate on the next reconcile, even if the stored one is still valid. |
+| `envoyxds.io/pause` | annotation only | unset | Suspend all certificate operations for this resource. |
+| `envoyxds.io/retry-base-delay` | label or annotation | `10m` | Wait before the first retry after a failed certificate operation. |
+| `envoyxds.io/retry-max-delay` | label or annotation | `168h` | Upper bound of the exponential backoff. |
+| `envoyxds.io/retry-multiplier` | label or annotation | `2` | Growth factor of the backoff. |
+
+The controller also writes `envoyxds.io/force-renewed-at` after a successful forced renewal,
+and keeps the existing `cert-expiration` annotation up to date.
+
+#### Forcing a renewal
+
+```bash
+kubectl annotate tlssecret my-domain-cert envoyxds.io/force-renew=true
+```
+
+The controller requests a new certificate on the next reconcile and removes the annotation
+**only once a different certificate has actually been stored**. If the request fails, the
+annotation stays in place and the retry follows the backoff schedule below, so the intent is
+never silently dropped. A dry-run controller leaves the annotation untouched as well.
+
+To retry immediately while a backoff is pending, write a *different* value:
+
+```bash
+kubectl annotate --overwrite tlssecret my-domain-cert envoyxds.io/force-renew="$(date +%s)"
+```
+
+A value that has already been acted on (recorded in `status.forceRenewRequest`) stays subject
+to the backoff, so a stale annotation cannot cause a retry on every watch event.
+
+#### Pausing a certificate
+
+```bash
+kubectl annotate tlssecret my-domain-cert envoyxds.io/pause=true
+```
+
+While paused the controller performs no storage reads and no ACME requests. The certificate
+already published to the Envoy snapshot keeps being served, `status.paused` is `true` and the
+`Paused` condition is set. Any recorded backoff is preserved, so unpausing a rate-limited
+secret does not restart the retries immediately. Remove the annotation to resume:
+
+```bash
+kubectl annotate tlssecret my-domain-cert envoyxds.io/pause-
+```
+
+#### Retry backoff after failures
+
+Failed certificate operations (Let's Encrypt rate limits, DNS provider errors, storage
+failures) back off exponentially instead of retrying on a fixed interval:
+
+| Consecutive failures | 1 | 2 | 3 | 4 | 5 | 6 | 7 | ... | capped |
+| -------------------- | - | - | - | - | - | - | - | --- | ------ |
+| Wait before retry | 10m | 20m | 40m | 80m | 2h40m | 5h20m | 10h40m | ... | 168h (1 week) |
+
+The state lives in `.status`, so it survives controller restarts and leader changes — a restart
+during a rate limit does not reset the wait back to 10 minutes. A successful reconcile clears
+it, and the next failure starts again from the base delay.
+
+Override the schedule for a single certificate:
+
+```yaml
+apiVersion: envoyxds.io/v1alpha1
+kind: TLSSecret
+metadata:
+  name: my-domain-cert
+  labels:
+    envoyxds.io/retry-base-delay: 30m
+    envoyxds.io/retry-max-delay: 24h
+spec:
+  domains:
+    - "example.com"
+  challenge:
+    challenge_type: DNS01
+    dns01_provider: cloudflare
+    acme_env: Production
+```
+
+Controller-wide defaults are set with `--retryBaseDelay`, `--retryMaxDelay` and
+`--retryMultiplier`.
+
+#### Inspecting state
+
+```bash
+kubectl get tlssecret
+kubectl get tlssecret -o wide   # adds Retry-In, Failures and Paused
+```
+
+| Status field | Meaning |
+| ------------ | ------- |
+| `status.certificateInfo.daysUntilExpiry` | Days until the current certificate expires |
+| `status.nextRenewal` | Time left before the controller renews |
+| `status.lastReconciled` | When the controller last checked this certificate |
+| `status.failureCount` | Consecutive failed operations |
+| `status.lastFailureTime` | When the most recent attempt failed |
+| `status.backoffUntil` | Earliest time of the next attempt |
+| `status.nextRetryDelay` | The backoff currently in effect |
+| `status.paused` | Whether operations are suspended |
+| `status.forceRenewRequest` | The force-renew value already acted on |
+
+A healthy certificate is re-checked at least once per `--statusRefreshInterval` (default `1h`),
+so these fields stay current even when renewal is two months away.
+
 ## Features
 
 - Automatic TLS certificate management
@@ -285,6 +397,8 @@ SDS uses [lego](https://github.com/go-acme/lego) for ACME certificate management
 - Multiple DNS provider support via [lego](https://github.com/go-acme/lego)
 - Multi-account support for DNS providers
 - Automatic certificate renewal
+- Forced renewal and pausing via annotations
+- Exponential backoff with per-certificate tuning
 - Certificate expiry metrics
 
 ## Configuration
