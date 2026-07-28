@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-acme/lego/v4/certcrypto"
@@ -59,6 +60,13 @@ type LetsEncrypt struct {
 	Registration *registration.Resource
 	Key          crypto.PrivateKey
 	client       *lego.Client
+
+	// mu serializes Get. A single LetsEncrypt value is shared by all TLSSecret
+	// reconciles, which run concurrently, and Get mutates both the shared lego
+	// client (SetDNS01Provider/SetHTTP01Provider) and process-wide DNS provider
+	// environment variables. Without this lock two domains using different
+	// provider credentials clobber each other.
+	mu sync.Mutex
 }
 
 type CertGetter interface {
@@ -68,7 +76,7 @@ type CertGetter interface {
 func (u *LetsEncrypt) GetEmail() string {
 	return u.Email
 }
-func (u LetsEncrypt) GetRegistration() *registration.Resource {
+func (u *LetsEncrypt) GetRegistration() *registration.Resource {
 	return u.Registration
 }
 func (u *LetsEncrypt) GetPrivateKey() crypto.PrivateKey {
@@ -119,6 +127,10 @@ func (u *LetsEncrypt) initClient(caDirURL string) error {
 }
 
 func (u *LetsEncrypt) Get(d *xdstypes.DomainConfig) (xdstypes.Cert, error) {
+	// Serialized: mutates the shared lego client and process-wide env vars.
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	// Initialize client if not already initialized or if CADirURL has changed
 	if u.client == nil {
 		if err := u.initClient(d.Challenge.ACMEEnv.String()); err != nil {
@@ -441,6 +453,22 @@ func (c *Config) GetRenewBeforeExpireInMinutes() int {
 
 func (c *Config) GetDryRun() bool {
 	return c.DryRun
+}
+
+// EnsureLEClient lazily creates the shared Let's Encrypt client. TLSSecret
+// reconciles run concurrently, so the assignment has to be guarded.
+func (c *Config) EnsureLEClient() (*LetsEncrypt, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.LeClient == nil {
+		le := NewLEA(c.LetsEncryptAccount.Email, c.LetsEncryptAccount.PrivateKeyBase64)
+		if le == nil {
+			return nil, xdserr.ErrLetsEncryptAccount
+		}
+		c.LeClient = le
+	}
+	return c.LeClient, nil
 }
 
 type StorageConfigReaderWriter interface {

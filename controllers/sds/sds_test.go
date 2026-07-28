@@ -286,7 +286,7 @@ func TestCertNotFoundGeneratingError_makeSecrets(t *testing.T) {
 	le := mock.NewMockCertGetter(ctl)
 	le.EXPECT().Get(mockDomainConfigStaging).Return(xdstypes.Cert{}, xdserr.ErrGetCert).AnyTimes()
 
-	_, _, _, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true)
+	_, _, _, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true, false)
 	require.EqualError(t, err, fmt.Errorf(xdserr.ErrGetCert.Error()+": %w", xdserr.ErrGetCert).Error())
 }
 
@@ -320,7 +320,7 @@ func TestCertNotFoundGenerating_makeSecrets(t *testing.T) {
 			},
 		},
 	}
-	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true, false)
 	require.NoError(t, err)
 	require.Equal(t, want, resp)
 	require.False(t, expireTime.IsZero()) // Ensure we got an expiration time
@@ -340,7 +340,7 @@ func TestCertIsManualAndNotFoundNoError_makeSecrets(t *testing.T) {
 
 	le := mock.NewMockCertGetter(ctl)
 
-	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigManual, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigManual, config, le, true, false)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.True(t, expireTime.IsZero()) // Manual certs should have zero expiration time
@@ -378,7 +378,7 @@ func TestCertFromOneDomainToMulti_makeSecrets(t *testing.T) {
 			},
 		},
 	}
-	resp, _, expireTime, err := makeSecret(context.Background(), mockMultiDomainConfigStaging, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockMultiDomainConfigStaging, config, le, true, false)
 	require.NoError(t, err)
 	require.Equal(t, want, resp)
 	require.False(t, expireTime.IsZero()) // Ensure we got an expiration time
@@ -411,7 +411,7 @@ func TestCertStaging_makeSecrets(t *testing.T) {
 			},
 		},
 	}
-	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true, false)
 	require.NoError(t, err)
 	require.Equal(t, want, resp)
 	require.False(t, expireTime.IsZero()) // Ensure we got an expiration time
@@ -444,7 +444,7 @@ func TestCertProduction_makeSecrets(t *testing.T) {
 			},
 		},
 	}
-	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigProduction, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigProduction, config, le, true, false)
 	require.NoError(t, err)
 	require.Equal(t, want, resp)
 	require.False(t, expireTime.IsZero()) // Ensure we got an expiration time
@@ -483,7 +483,7 @@ func TestCertChangedEnvStageToProd_makeSecrets(t *testing.T) {
 			},
 		},
 	}
-	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigProduction, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigProduction, config, le, true, false)
 	require.NoError(t, err)
 	require.Equal(t, want, resp)
 	require.False(t, expireTime.IsZero()) // Ensure we got an expiration time
@@ -523,7 +523,7 @@ func TestCertChangedEnvProdToStage_makeSecrets(t *testing.T) {
 			},
 		},
 	}
-	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true, false)
 	require.NoError(t, err)
 	require.Equal(t, want, resp)
 	require.False(t, expireTime.IsZero()) // Ensure we got an expiration time
@@ -561,7 +561,7 @@ func TestCertNotFound_makeSecrets(t *testing.T) {
 			},
 		},
 	}
-	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true, false)
 	require.NoError(t, err)
 	require.Equal(t, want, resp)
 	require.False(t, expireTime.IsZero()) // Ensure we got an expiration time
@@ -600,7 +600,7 @@ func TestCertRenew_makeSecrets(t *testing.T) {
 			},
 		},
 	}
-	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true)
+	resp, _, expireTime, err := makeSecret(context.Background(), mockDomainConfigStaging, config, le, true, false)
 	require.NoError(t, err)
 	require.Equal(t, want, resp)
 	require.False(t, expireTime.IsZero()) // Ensure we got an expiration time

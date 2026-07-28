@@ -105,6 +105,37 @@ type TLSSecretStatus struct {
 	// Message provides additional information about the current state
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// FailureCount is the number of consecutive failed certificate operations.
+	// It is reset to zero after a successful reconciliation and drives the
+	// exponential backoff between retries.
+	// +optional
+	FailureCount int32 `json:"failureCount,omitempty"`
+
+	// LastFailureTime is when the most recent certificate operation failed
+	// +optional
+	LastFailureTime *metav1.Time `json:"lastFailureTime,omitempty"`
+
+	// BackoffUntil is the earliest time the next certificate operation will be
+	// attempted. Persisted so that a controller restart does not reset the
+	// backoff and re-trigger upstream rate limiting.
+	// +optional
+	BackoffUntil *metav1.Time `json:"backoffUntil,omitempty"`
+
+	// NextRetryDelay is the human readable backoff currently in effect
+	// +optional
+	NextRetryDelay string `json:"nextRetryDelay,omitempty"`
+
+	// Paused indicates certificate operations are suspended by the
+	// envoyxds.io/pause annotation
+	// +optional
+	Paused bool `json:"paused,omitempty"`
+
+	// ForceRenewRequest is the value of the envoyxds.io/force-renew annotation
+	// the controller has already acted on. A different value means a new
+	// request, which clears any pending backoff so the retry happens at once.
+	// +optional
+	ForceRenewRequest string `json:"forceRenewRequest,omitempty"`
 }
 
 // Condition types for TLSSecret
@@ -117,6 +148,8 @@ const (
 	TLSSecretConditionError = "Error"
 	// TLSSecretConditionCertExpiring indicates the certificate is expiring soon
 	TLSSecretConditionCertExpiring = "CertExpiring" // #nosec G101 -- not a credential, just a condition name
+	// TLSSecretConditionPaused indicates certificate operations are suspended
+	TLSSecretConditionPaused = "Paused"
 )
 
 //+kubebuilder:object:root=true
@@ -128,6 +161,9 @@ const (
 //+kubebuilder:printcolumn:name="Days",type="integer",JSONPath=".status.certificateInfo.daysUntilExpiry",description="Days until expiry"
 //+kubebuilder:printcolumn:name="Nodes",type="string",JSONPath=".status.nodes",description="Nodes where secret is deployed"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+//+kubebuilder:printcolumn:name="Retry-In",type="string",JSONPath=".status.nextRetryDelay",priority=1,description="Backoff before the next retry after a failure"
+//+kubebuilder:printcolumn:name="Failures",type="integer",JSONPath=".status.failureCount",priority=1,description="Consecutive failed certificate operations"
+//+kubebuilder:printcolumn:name="Paused",type="boolean",JSONPath=".status.paused",priority=1,description="Whether certificate operations are suspended"
 
 // TLSSecret is the Schema for the tlssecrets API
 type TLSSecret struct {

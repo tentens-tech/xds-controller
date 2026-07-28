@@ -44,9 +44,22 @@ const (
 	DefaultRefreshTime             = 5000 * time.Millisecond
 	DefaultRenewBeforeExpireInMins = 43200
 	DefaultEnvFilePath             = "/vault/secrets/env"
-	DefaultMetricsAddr             = ":8080"
-	DefaultProbeAddr               = ":8081"
-	DefaultEnvPrefix               = "XDS_"
+
+	// DefaultStatusRefreshInterval caps the requeue delay so TLSSecret status
+	// fields (days until expiry, last reconciled) stay current even when the
+	// next renewal is months away.
+	DefaultStatusRefreshInterval = time.Hour
+	// DefaultRetryBaseDelay is the wait before the first retry after a failed
+	// certificate operation.
+	DefaultRetryBaseDelay = 10 * time.Minute
+	// DefaultRetryMaxDelay caps the exponential backoff between failures.
+	DefaultRetryMaxDelay = 168 * time.Hour
+	// DefaultRetryMultiplier is the growth factor of that backoff.
+	DefaultRetryMultiplier = 2.0
+
+	DefaultMetricsAddr = ":8080"
+	DefaultProbeAddr   = ":8081"
+	DefaultEnvPrefix   = "XDS_"
 
 	// Leader election configuration.
 	LeaderLeaseDuration = 15 * time.Second
@@ -72,6 +85,12 @@ type Options struct {
 
 	// Certificate renewal
 	RenewBeforeExpireInMinutes int
+
+	// Status refresh and failure backoff
+	StatusRefreshInterval time.Duration
+	RetryBaseDelay        time.Duration
+	RetryMaxDelay         time.Duration
+	RetryMultiplier       float64
 
 	// Let's Encrypt configuration
 	LetsEncryptEmail            string
@@ -101,6 +120,10 @@ func NewOptions() *Options {
 		MetricsAddr:                DefaultMetricsAddr,
 		ProbeAddr:                  DefaultProbeAddr,
 		RenewBeforeExpireInMinutes: DefaultRenewBeforeExpireInMins,
+		StatusRefreshInterval:      DefaultStatusRefreshInterval,
+		RetryBaseDelay:             DefaultRetryBaseDelay,
+		RetryMaxDelay:              DefaultRetryMaxDelay,
+		RetryMultiplier:            DefaultRetryMultiplier,
 		EnvPrefix:                  DefaultEnvPrefix,
 		LogLevel:                   -1, // Default zap debug level
 	}
@@ -129,6 +152,16 @@ func (o *Options) RegisterFlags(fs *flag.FlagSet) {
 	// Certificate renewal
 	fs.IntVar(&o.RenewBeforeExpireInMinutes, "renewBeforeExpireInMinutes", o.RenewBeforeExpireInMinutes,
 		"Renew certificates when remaining validity is less than this value (in minutes)")
+
+	// Status refresh and failure backoff
+	fs.DurationVar(&o.StatusRefreshInterval, "statusRefreshInterval", o.StatusRefreshInterval,
+		"Maximum time between TLSSecret reconciliations, so status stays current when renewal is far away")
+	fs.DurationVar(&o.RetryBaseDelay, "retryBaseDelay", o.RetryBaseDelay,
+		"Delay before the first retry after a failed certificate operation")
+	fs.DurationVar(&o.RetryMaxDelay, "retryMaxDelay", o.RetryMaxDelay,
+		"Upper bound of the exponential backoff between failed certificate operations")
+	fs.Float64Var(&o.RetryMultiplier, "retryMultiplier", o.RetryMultiplier,
+		"Growth factor of the backoff between failed certificate operations")
 
 	// Kubernetes controller configuration
 	fs.StringVar(&o.MetricsAddr, "metrics-bind-address", o.MetricsAddr, "Address for the metrics endpoint")
@@ -240,6 +273,10 @@ func (o *Options) BuildXDSConfig() (*xds.Config, error) {
 		Cluster:                    o.Cluster,
 		RefreshTime:                DefaultRefreshTime,
 		RenewBeforeExpireInMinutes: o.RenewBeforeExpireInMinutes,
+		StatusRefreshInterval:      o.StatusRefreshInterval,
+		RetryBaseDelay:             o.RetryBaseDelay,
+		RetryMaxDelay:              o.RetryMaxDelay,
+		RetryMultiplier:            o.RetryMultiplier,
 		DryRun:                     o.DryRun,
 		ReconciliationStatus:       status.NewReconciliationStatus(),
 		HTTPClient: &http.Client{

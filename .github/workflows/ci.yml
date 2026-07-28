@@ -1268,6 +1268,337 @@ jobs:
           echo "  - Controller detects K8s Secret update and re-reconciles TLSSecret"
           echo "  - Envoy serves the updated cert (serial verified via TLS handshake)"
 
+      - name: Test SDS force-renew annotation
+        run: |
+          NODE_IP="${{ steps.envoy.outputs.node_ip }}"
+          HTTPS_PORT="${{ steps.envoy.outputs.https_port }}"
+
+          echo "SDS_FORCE_RENEW_RESULT=❌ Failed" >> "$GITHUB_ENV"
+
+          echo "=== Testing envoyxds.io/force-renew ==="
+          echo "A new certificate must be issued on demand, the annotation must be"
+          echo "cleared only after the new certificate is stored, and Envoy must"
+          echo "serve the rotated certificate."
+          echo ""
+
+          MAX_RETRIES=12
+          RETRY_INTERVAL=5
+
+          FP_BEFORE=""
+          for i in $(seq 1 $MAX_RETRIES); do
+            FP_BEFORE=$(kubectl get tlssecret e2e-wildcard-cert -n xds-system \
+              -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+            [[ -n "$FP_BEFORE" ]] && break
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ -z "$FP_BEFORE" ]]; then
+            echo "❌ e2e-wildcard-cert never reported a certificate fingerprint"
+            kubectl get tlssecret e2e-wildcard-cert -n xds-system -o yaml || true
+            exit 1
+          fi
+          echo "Fingerprint before: $FP_BEFORE"
+
+          SERIAL_BEFORE=$(echo | openssl s_client -servername secure.e2e.local \
+            -connect "${NODE_IP}:${HTTPS_PORT}" 2>/dev/null \
+            | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+          echo "Envoy serial before: $SERIAL_BEFORE"
+
+          kubectl annotate tlssecret e2e-wildcard-cert -n xds-system \
+            envoyxds.io/force-renew=true --overwrite
+
+          RENEWED=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            FP_AFTER=$(kubectl get tlssecret e2e-wildcard-cert -n xds-system \
+              -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+            if [[ -n "$FP_AFTER" && "$FP_AFTER" != "$FP_BEFORE" ]]; then
+              echo "✅ force-renew issued a new certificate (attempt $i)"
+              echo "   $FP_BEFORE -> $FP_AFTER"
+              RENEWED=true
+              break
+            fi
+            echo "⏳ Waiting for the new certificate... (attempt $i/$MAX_RETRIES)"
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$RENEWED" != "true" ]]; then
+            echo "❌ force-renew did not produce a new certificate"
+            kubectl get tlssecret e2e-wildcard-cert -n xds-system -o yaml || true
+            kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
+            exit 1
+          fi
+
+          LEFTOVER=$(kubectl get tlssecret e2e-wildcard-cert -n xds-system \
+            -o jsonpath='{.metadata.annotations.envoyxds\.io/force-renew}' 2>/dev/null || echo "")
+          if [[ -n "$LEFTOVER" ]]; then
+            echo "❌ force-renew annotation still present after a successful renewal"
+            exit 1
+          fi
+          echo "✅ force-renew annotation removed after success"
+
+          RENEWED_AT=$(kubectl get tlssecret e2e-wildcard-cert -n xds-system \
+            -o jsonpath='{.metadata.annotations.envoyxds\.io/force-renewed-at}' 2>/dev/null || echo "")
+          echo "force-renewed-at: ${RENEWED_AT:-(not set)}"
+
+          SERIAL_AFTER=""
+          for i in $(seq 1 $MAX_RETRIES); do
+            SERIAL_AFTER=$(echo | openssl s_client -servername secure.e2e.local \
+              -connect "${NODE_IP}:${HTTPS_PORT}" 2>/dev/null \
+              | openssl x509 -serial -noout 2>/dev/null | cut -d'=' -f2 | tr '[:upper:]' '[:lower:]' || echo "")
+            if [[ -n "$SERIAL_AFTER" && "$SERIAL_AFTER" != "$SERIAL_BEFORE" ]]; then
+              echo "✅ Envoy is serving the force-renewed certificate (serial: $SERIAL_AFTER)"
+              break
+            fi
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ -n "$SERIAL_BEFORE" && "$SERIAL_AFTER" == "$SERIAL_BEFORE" ]]; then
+            echo "❌ Envoy still serves the pre-renewal certificate (serial: $SERIAL_BEFORE)"
+            kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
+            exit 1
+          fi
+
+          echo "SDS_FORCE_RENEW_RESULT=✅ Passed" >> "$GITHUB_ENV"
+
+      - name: Test SDS pause annotation
+        run: |
+          echo "SDS_PAUSE_RESULT=❌ Failed" >> "$GITHUB_ENV"
+
+          echo "=== Testing envoyxds.io/pause ==="
+          echo "While paused the controller must ignore changes to the referenced"
+          echo "K8s Secret, and must catch up once the annotation is removed."
+          echo ""
+
+          MAX_RETRIES=12
+          RETRY_INTERVAL=5
+
+          kubectl annotate tlssecret e2e-k8s-ref-cert -n xds-system \
+            envoyxds.io/pause=true --overwrite
+
+          PAUSED=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            IS_PAUSED=$(kubectl get tlssecret e2e-k8s-ref-cert -n xds-system \
+              -o jsonpath='{.status.paused}' 2>/dev/null || echo "")
+            if [[ "$IS_PAUSED" == "true" ]]; then
+              echo "✅ status.paused=true (attempt $i)"
+              PAUSED=true
+              break
+            fi
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$PAUSED" != "true" ]]; then
+            echo "❌ TLSSecret did not report status.paused"
+            kubectl get tlssecret e2e-k8s-ref-cert -n xds-system -o yaml || true
+            exit 1
+          fi
+
+          PAUSED_CONDITION=$(kubectl get tlssecret e2e-k8s-ref-cert -n xds-system \
+            -o jsonpath='{.status.conditions[?(@.type=="Paused")].status}' 2>/dev/null || echo "")
+          if [[ "$PAUSED_CONDITION" != "True" ]]; then
+            echo "❌ Paused condition not set (got '$PAUSED_CONDITION')"
+            exit 1
+          fi
+          echo "✅ Paused condition reported"
+
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/tls-paused.key -out /tmp/tls-paused.crt \
+            -days 365 -nodes -subj "/CN=k8sref.e2e.local/O=Paused" \
+            -addext "subjectAltName=DNS:k8sref.e2e.local" 2>/dev/null
+
+          PAUSED_FP=$(openssl x509 -in /tmp/tls-paused.crt -fingerprint -sha256 -noout \
+            | cut -d'=' -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          echo "New cert fingerprint (must be ignored while paused): $PAUSED_FP"
+
+          kubectl create secret tls e2e-k8s-tls-data \
+            --cert=/tmp/tls-paused.crt --key=/tmp/tls-paused.key \
+            -n xds-system --dry-run=client -o yaml | kubectl apply -f -
+
+          # Give the controller several reconcile intervals to (incorrectly) act.
+          sleep 30
+
+          FP_WHILE_PAUSED=$(kubectl get tlssecret e2e-k8s-ref-cert -n xds-system \
+            -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+          if [[ "$FP_WHILE_PAUSED" == "$PAUSED_FP" ]]; then
+            echo "❌ Paused TLSSecret still reconciled the K8s Secret change"
+            exit 1
+          fi
+          echo "✅ Paused TLSSecret ignored the K8s Secret change"
+
+          kubectl annotate tlssecret e2e-k8s-ref-cert -n xds-system envoyxds.io/pause-
+
+          RESUMED=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            FP_RESUMED=$(kubectl get tlssecret e2e-k8s-ref-cert -n xds-system \
+              -o jsonpath='{.status.certificateInfo.fingerprint}' 2>/dev/null || echo "")
+            if [[ "$FP_RESUMED" == "$PAUSED_FP" ]]; then
+              echo "✅ Reconciliation resumed after the annotation was removed (attempt $i)"
+              RESUMED=true
+              break
+            fi
+            echo "⏳ Waiting for the controller to catch up... (attempt $i/$MAX_RETRIES)"
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$RESUMED" != "true" ]]; then
+            echo "❌ TLSSecret did not resume after the pause annotation was removed"
+            kubectl get tlssecret e2e-k8s-ref-cert -n xds-system -o yaml || true
+            kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
+            exit 1
+          fi
+
+          echo "SDS_PAUSE_RESULT=✅ Passed" >> "$GITHUB_ENV"
+
+      - name: Test SDS failure backoff
+        run: |
+          echo "SDS_BACKOFF_RESULT=❌ Failed" >> "$GITHUB_ENV"
+
+          echo "=== Testing exponential backoff on failures ==="
+          echo "A TLSSecret whose storage can never be read must record a failure"
+          echo "count, a backoff deadline, and must double the wait on each retry."
+          echo "The per-secret retry-base-delay label sets the starting wait."
+          echo ""
+
+          MAX_RETRIES=12
+          RETRY_INTERVAL=5
+
+          # Local storage under /dev/null can never be read or created, so every
+          # reconcile fails deterministically without any outbound network call.
+          kubectl apply -f - <<'EOF'
+          apiVersion: envoyxds.io/v1alpha1
+          kind: TLSSecret
+          metadata:
+            name: e2e-backoff-cert
+            namespace: xds-system
+            annotations:
+              clusters: "e2e-test"
+              nodes: "e2e-test-node"
+            labels:
+              envoyxds.io/retry-base-delay: 20s
+              envoyxds.io/retry-max-delay: 5m
+          spec:
+            domains:
+              - "backoff.e2e.local"
+            config:
+              type: Local
+              local_config:
+                path: /dev/null/certs
+          EOF
+
+          FAILED=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            COUNT=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
+              -o jsonpath='{.status.failureCount}' 2>/dev/null || echo "")
+            if [[ -n "$COUNT" && "$COUNT" -ge 1 ]]; then
+              echo "✅ Failure recorded: status.failureCount=$COUNT (attempt $i)"
+              FAILED=true
+              break
+            fi
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$FAILED" != "true" ]]; then
+            echo "❌ Failing TLSSecret never recorded a failure count"
+            kubectl get tlssecret e2e-backoff-cert -n xds-system -o yaml || true
+            kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
+            exit 1
+          fi
+
+          RETRY_DELAY=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
+            -o jsonpath='{.status.nextRetryDelay}' 2>/dev/null || echo "")
+          if [[ "$RETRY_DELAY" != "20s" ]]; then
+            echo "❌ Expected nextRetryDelay=20s from the label, got '$RETRY_DELAY'"
+            exit 1
+          fi
+          echo "✅ Per-secret retry-base-delay label honored (nextRetryDelay=$RETRY_DELAY)"
+
+          BACKOFF_UNTIL=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
+            -o jsonpath='{.status.backoffUntil}' 2>/dev/null || echo "")
+          if [[ -z "$BACKOFF_UNTIL" ]]; then
+            echo "❌ status.backoffUntil was not recorded"
+            exit 1
+          fi
+          echo "✅ status.backoffUntil recorded: $BACKOFF_UNTIL"
+
+          ERROR_CONDITION=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
+            -o jsonpath='{.status.conditions[?(@.type=="Error")].status}' 2>/dev/null || echo "")
+          if [[ "$ERROR_CONDITION" != "True" ]]; then
+            echo "❌ Error condition not set on a failing TLSSecret (got '$ERROR_CONDITION')"
+            exit 1
+          fi
+          echo "✅ Error condition reported"
+
+          ESCALATED=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            NEXT_DELAY=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
+              -o jsonpath='{.status.nextRetryDelay}' 2>/dev/null || echo "")
+            if [[ "$NEXT_DELAY" == "40s" ]]; then
+              COUNT_NOW=$(kubectl get tlssecret e2e-backoff-cert -n xds-system \
+                -o jsonpath='{.status.failureCount}' 2>/dev/null || echo "")
+              echo "✅ Backoff escalated: failureCount=$COUNT_NOW, nextRetryDelay=$NEXT_DELAY (attempt $i)"
+              ESCALATED=true
+              break
+            fi
+            echo "⏳ Waiting for the backoff to escalate (currently '$NEXT_DELAY')... (attempt $i/$MAX_RETRIES)"
+            sleep $RETRY_INTERVAL
+          done
+
+          if [[ "$ESCALATED" != "true" ]]; then
+            echo "❌ Backoff did not escalate from 20s to 40s"
+            kubectl get tlssecret e2e-backoff-cert -n xds-system -o yaml || true
+            exit 1
+          fi
+
+          kubectl delete tlssecret e2e-backoff-cert -n xds-system --ignore-not-found
+
+          echo "SDS_BACKOFF_RESULT=✅ Passed" >> "$GITHUB_ENV"
+
+      - name: Test SDS status freshness
+        run: |
+          echo "SDS_FRESHNESS_RESULT=❌ Failed" >> "$GITHUB_ENV"
+
+          echo "=== Testing status freshness ==="
+          echo "A healthy certificate whose renewal is a year away must still be"
+          echo "re-reconciled, so daysUntilExpiry and lastReconciled stay current."
+          echo ""
+
+          MAX_RETRIES=12
+          RETRY_INTERVAL=5
+
+          BEFORE=$(kubectl get tlssecret e2e-wildcard-cert -n xds-system \
+            -o jsonpath='{.status.lastReconciled}' 2>/dev/null || echo "")
+          echo "lastReconciled before: $BEFORE"
+
+          # The controller runs with --statusRefreshInterval=20s in this environment.
+          ADVANCED=false
+          for i in $(seq 1 $MAX_RETRIES); do
+            sleep $RETRY_INTERVAL
+            NOW=$(kubectl get tlssecret e2e-wildcard-cert -n xds-system \
+              -o jsonpath='{.status.lastReconciled}' 2>/dev/null || echo "")
+            if [[ -n "$NOW" && "$NOW" != "$BEFORE" ]]; then
+              echo "✅ lastReconciled advanced: $BEFORE -> $NOW (attempt $i)"
+              ADVANCED=true
+              break
+            fi
+          done
+
+          if [[ "$ADVANCED" != "true" ]]; then
+            echo "❌ status.lastReconciled did not advance; status would go stale"
+            kubectl get tlssecret e2e-wildcard-cert -n xds-system -o yaml || true
+            exit 1
+          fi
+
+          DAYS=$(kubectl get tlssecret e2e-wildcard-cert -n xds-system \
+            -o jsonpath='{.status.certificateInfo.daysUntilExpiry}' 2>/dev/null || echo "")
+          NEXT_RENEWAL=$(kubectl get tlssecret e2e-wildcard-cert -n xds-system \
+            -o jsonpath='{.status.nextRenewal}' 2>/dev/null || echo "")
+          if [[ -z "$DAYS" || -z "$NEXT_RENEWAL" ]]; then
+            echo "❌ Status is missing daysUntilExpiry or nextRenewal"
+            exit 1
+          fi
+          echo "✅ Status reports daysUntilExpiry=$DAYS nextRenewal='$NEXT_RENEWAL'"
+
+          echo "SDS_FRESHNESS_RESULT=✅ Passed" >> "$GITHUB_ENV"
+
       - name: Generate E2E summary
         if: always()
         run: |
@@ -1314,6 +1645,14 @@ jobs:
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| TLSSecret loads cert from K8s Secret | ${{ env.SDS_K8S_REF_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| K8s Secret update triggers re-reconcile | ${{ env.SDS_K8S_UPDATE_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### SDS Lifecycle Tests" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| force-renew annotation rotates cert | ${{ env.SDS_FORCE_RENEW_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| pause annotation suspends reconcile | ${{ env.SDS_PAUSE_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failure backoff escalates (20s -> 40s) | ${{ env.SDS_BACKOFF_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status stays fresh (lastReconciled) | ${{ env.SDS_FRESHNESS_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Debug on failure
         if: failure()
