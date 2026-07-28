@@ -334,7 +334,7 @@ failures) back off exponentially instead of retrying on a fixed interval:
 
 | Consecutive failures | 1 | 2 | 3 | 4 | 5 | 6 | 7 | ... | capped |
 | -------------------- | - | - | - | - | - | - | - | --- | ------ |
-| Wait before retry    | 10m | 20m | 40m | 80m | 2h40m | 5h20m | 10h40m | ... | 168h (1 week) |
+| Wait before retry | 10m | 20m | 40m | 80m | 2h40m | 5h20m | 10h40m | ... | 168h (1 week) |
 
 The state lives in `.status`, so it survives controller restarts and leader changes — a restart
 during a rate limit does not reset the wait back to 10 minutes. A successful reconcile clears
