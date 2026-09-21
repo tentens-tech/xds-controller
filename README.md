@@ -48,6 +48,7 @@ Managing Envoy at scale presents several challenges:
 
 - **Advanced Capabilities**
   - Full HTTP Connection Manager (HCM) configuration support
+  - Filter chain conflict detection that follows Envoy's own matching rules, so conflicting Routes are rejected on the Route instead of breaking the listener ([details](controllers/rds/README.md#filter-chain-matching-and-conflicts))
   - QUIC/HTTP3 support
   - TCP proxy support
   - Leader election for HA deployments
@@ -363,6 +364,8 @@ spec:
 
 `tlssecret_refs` lists extra TLSSecret CRs whose certificates are merged into the same downstream TLS context as `tlssecret_ref`. If both are set, `tlssecret_ref` is listed first, then `tlssecret_refs`, with duplicates and blank entries dropped. Use this when one route needs multiple SDS-backed certs (for example multi-SNI setups). You can use `tlssecret_refs` alone without `tlssecret_ref`.
 
+Two Routes can share a listener only when Envoy can tell their filter chains apart. When it can't, the older Route wins and the newer one reports the conflict in its status. A Route also loses to a matching chain in the Listener's own `filter_chains`. On top of Envoy's rules, a wildcard `server_names` entry conflicts with an exact name it covers when both Routes' virtual hosts share a domain. Routes on different clusters, nodes, or listeners never conflict. See [Filter Chain Matching and Conflicts](controllers/rds/README.md#filter-chain-matching-and-conflicts), including the notes on upgrading.
+
 ## Prometheus Metrics
 
 | Metric | Description |
@@ -373,7 +376,7 @@ spec:
 | `xds_envoy_stream_active` | Active Envoy connections |
 | `xds_resource_count` | Resource count by type |
 | `xds_error_total` | Error counter by type |
-| `xds_config_error_count` | Configuration errors |
+| `xds_config_error_count` | Configuration errors, including Routes rejected for filter chain conflicts. Counts up per resource and error message until the controller restarts; it is not cleared when the error is fixed |
 
 ## Quick Examples
 
@@ -517,6 +520,21 @@ make manifests
 
 ```sh
 make test
+```
+
+The filter chain rules are also checked against a real Envoy (`envoy --mode validate`) when `ENVOY_PARITY_IMAGE` is set. This needs Docker:
+
+```sh
+ENVOY_PARITY_IMAGE=envoyproxy/envoy:v1.31-latest,envoyproxy/envoy:v1.36-latest go test ./pkg/xds/fcm/
+```
+
+### Audit Routes
+
+List the Routes the controller would reject, including manifests you haven't applied yet ([details](controllers/rds/README.md#checking-routes-with-route-audit)):
+
+```sh
+kubectl get routes.envoyxds.io,listeners.envoyxds.io -n xds-system -o yaml > live.yaml
+go run ./cmd/route-audit -nodeID global -cluster global live.yaml new-route.yaml
 ```
 
 ### Build

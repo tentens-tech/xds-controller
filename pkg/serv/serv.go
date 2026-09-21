@@ -16,6 +16,7 @@ package serv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -195,6 +196,7 @@ func processSnapshot(ctx context.Context, s *ServerConfig) error {
 	// Clean metrics for snapshot version tracking
 	xds.CleanSnapshots()
 
+	var inconsistent []error
 	for _, conf := range snapshots {
 		nodeInfo, err := util.GetNodeInfo(conf.NodeID)
 		if err != nil {
@@ -202,9 +204,9 @@ func processSnapshot(ctx context.Context, s *ServerConfig) error {
 			continue
 		}
 
-		// Validate snapshot consistency
+		// An inconsistent snapshot keeps the node on its last good one; clearing it would drop Envoy's watches.
 		if err := conf.Snapshot.Consistent(); err != nil {
-			logger.V(1).Error(err, "Snapshot inconsistency detected",
+			logger.Error(err, "Snapshot inconsistency detected, keeping the previous snapshot",
 				"version", conf.Version,
 				"cluster", nodeInfo.Clusters[0],
 				"node", nodeInfo.Nodes[0],
@@ -214,8 +216,8 @@ func processSnapshot(ctx context.Context, s *ServerConfig) error {
 				"EDS", len(conf.Snapshot.GetResources(resource.EndpointType)),
 				"SDS", len(conf.Snapshot.GetResources(resource.SecretType)),
 			)
-			s.Cache.ClearSnapshot(conf.NodeID)
-			return fmt.Errorf("snapshot inconsistency for node %s: %w", conf.NodeID, err)
+			inconsistent = append(inconsistent, fmt.Errorf("node %s: %w", conf.NodeID, err))
+			continue
 		}
 
 		// Update cache if snapshot version changed
@@ -258,7 +260,8 @@ func processSnapshot(ctx context.Context, s *ServerConfig) error {
 		}
 	}
 
-	return nil
+	// Returning an error makes the next tick retry the inconsistent nodes.
+	return errors.Join(inconsistent...)
 }
 
 // SleepWithContext sleeps for the specified duration or until the context is canceled.

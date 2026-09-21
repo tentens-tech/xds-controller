@@ -17,6 +17,7 @@
 package status
 
 import (
+	"sync"
 	"sync/atomic"
 )
 
@@ -35,6 +36,11 @@ type ReconciliationStatus struct {
 	hasClusters      atomic.Bool
 	hasEndpoints     atomic.Bool
 	hasDomainConfigs atomic.Bool
+
+	// Listeners RDS changed that LDS has not rebuilt yet
+	pendingMu        sync.Mutex
+	pendingSeq       uint64
+	pendingListeners map[string]uint64
 
 	// Track if controllers have completed initialization (cache sync + resource listing)
 	listenersInitialized     atomic.Bool
@@ -228,11 +234,50 @@ func (rs *ReconciliationStatus) AllReconciled() bool {
 	}
 
 	// For each resource type, either we don't have any OR they've been reconciled
-	listenersOK := !rs.hasListeners.Load() || rs.IsListenersReconciled()
+	listenersOK := (!rs.hasListeners.Load() || rs.IsListenersReconciled()) && !rs.HasPendingListeners()
 	routesOK := !rs.hasRoutes.Load() || rs.IsRoutesReconciled()
 	clustersOK := !rs.hasClusters.Load() || rs.IsClustersReconciled()
 	endpointsOK := !rs.hasEndpoints.Load() || rs.IsEndpointsReconciled()
 	domainConfigsOK := !rs.hasDomainConfigs.Load() || rs.IsDomainConfigsReconciled()
 
 	return listenersOK && routesOK && clustersOK && endpointsOK && domainConfigsOK
+}
+
+// IsRoutesInitialized reports whether the routes controller has listed its resources.
+func (rs *ReconciliationStatus) IsRoutesInitialized() bool {
+	return rs.routesInitialized.Load()
+}
+
+// MarkListenerPending records that a listener must be rebuilt before snapshots are consistent.
+func (rs *ReconciliationStatus) MarkListenerPending(key string) {
+	rs.pendingMu.Lock()
+	defer rs.pendingMu.Unlock()
+	if rs.pendingListeners == nil {
+		rs.pendingListeners = make(map[string]uint64)
+	}
+	rs.pendingSeq++
+	rs.pendingListeners[key] = rs.pendingSeq
+}
+
+// ListenerPendingSeq returns a token for the listener's pending mark, taken before a rebuild reads state.
+func (rs *ReconciliationStatus) ListenerPendingSeq(key string) uint64 {
+	rs.pendingMu.Lock()
+	defer rs.pendingMu.Unlock()
+	return rs.pendingListeners[key]
+}
+
+// ClearListenerPending records a rebuild; a mark placed after seq was taken stays pending.
+func (rs *ReconciliationStatus) ClearListenerPending(key string, seq uint64) {
+	rs.pendingMu.Lock()
+	defer rs.pendingMu.Unlock()
+	if rs.pendingListeners[key] == seq {
+		delete(rs.pendingListeners, key)
+	}
+}
+
+// HasPendingListeners reports whether any listener still waits for a rebuild.
+func (rs *ReconciliationStatus) HasPendingListeners() bool {
+	rs.pendingMu.Lock()
+	defer rs.pendingMu.Unlock()
+	return len(rs.pendingListeners) > 0
 }

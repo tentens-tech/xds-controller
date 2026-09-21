@@ -43,6 +43,7 @@ import (
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 	"github.com/tentens-tech/xds-controller/controllers/util"
 	"github.com/tentens-tech/xds-controller/pkg/status"
+	"github.com/tentens-tech/xds-controller/pkg/xds/fcm"
 	xdstypes "github.com/tentens-tech/xds-controller/pkg/xds/types"
 )
 
@@ -64,6 +65,7 @@ func GenerateSnapshotsV2(ctx context.Context, x *Config) ([]SnapshotConfig, erro
 
 	// Generate snapshots
 	for nodeID, nodeResources := range resources {
+		pruneUnreferencedRoutes(nodeResources)
 		version := GetHash(nodeResources)
 		snap, err := cache.NewSnapshot(version, nodeResources)
 		if err != nil {
@@ -77,6 +79,27 @@ func GenerateSnapshotsV2(ctx context.Context, x *Config) ([]SnapshotConfig, erro
 	}
 
 	return sc, nil
+}
+
+// pruneUnreferencedRoutes drops route configurations no listener on the node uses,
+// e.g. a route whose filter chain LDS skipped; the snapshot would be inconsistent otherwise.
+func pruneUnreferencedRoutes(res map[string][]types.Resource) {
+	routes := res[resource.RouteType]
+	if len(routes) == 0 {
+		return
+	}
+	listeners := make(map[string]types.ResourceWithTTL, len(res[resource.ListenerType]))
+	for _, l := range res[resource.ListenerType] {
+		listeners[cache.GetResourceName(l)] = types.ResourceWithTTL{Resource: l}
+	}
+	used := cache.GetResourceReferences(listeners)[resource.RouteType]
+	kept := routes[:0]
+	for _, r := range routes {
+		if used[cache.GetResourceName(r)] {
+			kept = append(kept, r)
+		}
+	}
+	res[resource.RouteType] = kept
 }
 
 func getResourcesFromSecretConfigs(x *Config, resources map[string]map[string][]types.Resource) map[string]map[string][]types.Resource {
@@ -297,6 +320,7 @@ type RouteConfig struct {
 	RouteConfiguration *routev3.RouteConfiguration
 	Route              *envoyxdsv1alpha1.Route
 	ListenerNames      []string
+	Matcher            *fcm.Matcher
 }
 
 type Process struct {

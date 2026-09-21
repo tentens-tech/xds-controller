@@ -27,7 +27,6 @@ import (
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 	"github.com/tentens-tech/xds-controller/pkg/status"
 	"github.com/tentens-tech/xds-controller/pkg/xds"
-	"github.com/tentens-tech/xds-controller/pkg/xds/types/lds"
 	rdstypes "github.com/tentens-tech/xds-controller/pkg/xds/types/rds"
 	routetypes "github.com/tentens-tech/xds-controller/pkg/xds/types/route"
 )
@@ -75,71 +74,6 @@ func TestRouteRecast(t *testing.T) {
 			}
 			assert.NoError(t, err)
 			assert.NotNil(t, result)
-		})
-	}
-}
-
-func TestMatchDomainName(t *testing.T) {
-	tests := []struct {
-		name    string
-		pattern string
-		domain  string
-		want    bool
-	}{
-		{
-			name:    "exact match",
-			pattern: "example.com",
-			domain:  "example.com",
-			want:    true,
-		},
-		{
-			name:    "no match",
-			pattern: "example.com",
-			domain:  "other.com",
-			want:    false,
-		},
-		{
-			name:    "wildcard match subdomain",
-			pattern: "*.example.com",
-			domain:  "www.example.com",
-			want:    true,
-		},
-		{
-			name:    "wildcard match different subdomain",
-			pattern: "*.example.com",
-			domain:  "api.example.com",
-			want:    true,
-		},
-		{
-			name:    "wildcard no match - wrong base domain",
-			pattern: "*.example.com",
-			domain:  "www.other.com",
-			want:    false,
-		},
-		{
-			name:    "wildcard no match - base domain itself",
-			pattern: "*.example.com",
-			domain:  "example.com",
-			want:    false,
-		},
-		{
-			name:    "trailing dot exact match",
-			pattern: "example.com.",
-			domain:  "example.com",
-			want:    true,
-		},
-		{
-			name:    "trailing dot on domain",
-			pattern: "example.com",
-			domain:  "example.com.",
-			want:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := matchDomainName(tt.pattern, tt.domain)
-			assert.Equal(t, tt.want, result)
 		})
 	}
 }
@@ -216,88 +150,6 @@ func TestHasVirtualHostOverlap(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := hasVirtualHostOverlap(tt.vh1, tt.vh2)
-			assert.Equal(t, tt.want, result)
-		})
-	}
-}
-
-func TestHasFilterChainOverlap(t *testing.T) {
-	port80 := uint32(80)
-	port443 := uint32(443)
-
-	tests := []struct {
-		name   string
-		match1 *lds.FilterChainMatch
-		match2 *lds.FilterChainMatch
-		want   bool
-	}{
-		{
-			name:   "both nil",
-			match1: nil,
-			match2: nil,
-			want:   false,
-		},
-		{
-			name:   "one nil",
-			match1: nil,
-			match2: &lds.FilterChainMatch{},
-			want:   false,
-		},
-		{
-			name: "same server names",
-			match1: &lds.FilterChainMatch{
-				ServerNames: []string{"example.com"},
-			},
-			match2: &lds.FilterChainMatch{
-				ServerNames: []string{"example.com"},
-			},
-			want: true,
-		},
-		{
-			name: "different server names",
-			match1: &lds.FilterChainMatch{
-				ServerNames: []string{"example.com"},
-			},
-			match2: &lds.FilterChainMatch{
-				ServerNames: []string{"other.com"},
-			},
-			want: false,
-		},
-		{
-			name: "different ports",
-			match1: &lds.FilterChainMatch{
-				DestinationPort: &port80,
-			},
-			match2: &lds.FilterChainMatch{
-				DestinationPort: &port443,
-			},
-			want: false,
-		},
-		{
-			name: "wildcard domain overlap",
-			match1: &lds.FilterChainMatch{
-				ServerNames: []string{"*.example.com"},
-			},
-			match2: &lds.FilterChainMatch{
-				ServerNames: []string{"api.example.com"},
-			},
-			want: true,
-		},
-		{
-			name: "empty server names - different types",
-			match1: &lds.FilterChainMatch{
-				ServerNames: []string{"example.com"},
-			},
-			match2: &lds.FilterChainMatch{
-				ServerNames: []string{},
-			},
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := hasFilterChainOverlap(tt.match1, tt.match2)
 			assert.Equal(t, tt.want, result)
 		})
 	}
@@ -579,53 +431,6 @@ func TestRouteStatusEqual_LastReconciledIgnored(t *testing.T) {
 	}
 
 	assert.True(t, routeStatusEqual(a, b))
-}
-
-func TestHasRouteConfigOverlap(t *testing.T) {
-	tests := []struct {
-		name   string
-		route1 *routetypes.Route
-		route2 *routetypes.Route
-		match1 *lds.FilterChainMatch
-		match2 *lds.FilterChainMatch
-		want   bool
-	}{
-		{
-			name:   "both routes nil",
-			route1: nil,
-			route2: nil,
-			match1: nil,
-			match2: nil,
-			want:   false,
-		},
-		{
-			name:   "one route nil",
-			route1: nil,
-			route2: &routetypes.Route{},
-			match1: nil,
-			match2: nil,
-			want:   false,
-		},
-		{
-			name: "routes with nil route configs",
-			route1: &routetypes.Route{
-				RouteConfig: nil,
-			},
-			route2: &routetypes.Route{
-				RouteConfig: nil,
-			},
-			match1: nil,
-			match2: nil,
-			want:   false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := hasRouteConfigOverlap(tt.route1, tt.route2, tt.match1, tt.match2)
-			assert.Equal(t, tt.want, result)
-		})
-	}
 }
 
 func TestRouteRecast_WithVirtualHosts(t *testing.T) {

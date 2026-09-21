@@ -431,3 +431,90 @@ spec:
     - name: envoy.filters.http.router
       typed_config:
         "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+---
+# No-SNI chains that differ only by ALPN, like a CDN chain next to a GCLB health probe.
+# Envoy accepts both; clients without ALPN land on the probe chain.
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: no-sni-alpn-route
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  listener_refs:
+    - https-complex
+  tlssecret_ref: e2e-wildcard-cert
+  filter_chain_match:
+    source_prefix_ranges:
+      - address_prefix: 0.0.0.0
+        prefix_len: 0
+    application_protocols:
+      - h2
+      - http/1.1
+  stat_prefix: no-sni-alpn
+  codec_type: AUTO
+  route_config:
+    name: no_sni_alpn_route
+    virtual_hosts:
+      - name: no_sni_alpn
+        domains:
+          - "*"
+        response_headers_to_add:
+          - header:
+              key: x-e2e-chain
+              value: "no-sni-alpn"
+        routes:
+          - match:
+              prefix: /
+            direct_response:
+              status: 200
+              body:
+                inline_string: "ok"
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+---
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: no-sni-probe-route
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  listener_refs:
+    - https-complex
+  tlssecret_ref: e2e-wildcard-cert
+  filter_chain_match:
+    source_prefix_ranges:
+      - address_prefix: 0.0.0.0
+        prefix_len: 0
+  stat_prefix: no-sni-probe
+  codec_type: AUTO
+  route_config:
+    name: no_sni_probe_route
+    virtual_hosts:
+      - name: no_sni_probe
+        domains:
+          - "*"
+        response_headers_to_add:
+          - header:
+              key: x-e2e-chain
+              value: "no-sni-probe"
+        routes:
+          - match:
+              prefix: /healthz
+            direct_response:
+              status: 200
+              body:
+                inline_string: "ok"
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router

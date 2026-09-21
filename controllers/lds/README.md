@@ -149,13 +149,17 @@ spec:
 
 ## RDS and Automatic Filter Chain Configuration
 
-When using the Route Discovery Service (RDS), the filter chains will be automatically added to the proper listener based on the `listener_ref` field in the Route spec. Routes specify which listener(s) they attach to using `spec.listener_ref` (comma-separated for multiple listeners).
+When using the Route Discovery Service (RDS), each Route adds one filter chain to every listener named in its `spec.listener_refs` list, on every node the Route targets. Listener names in `listener_refs` must match the `metadata.name` of the Listener resources.
 
-By specifying the listener name in the RDS configuration, the xDS control-plane will ensure that the corresponding filter chains are added to the appropriate listener in the Listener Discovery Service (LDS). This dynamic configuration allows for flexible and scalable management of filter chains based on the specific needs of each listener.
+The controller rebuilds a listener whenever RDS adds, changes, or removes a Route on it, including when a listener is dropped from a Route's `listener_refs`.
 
-Please note that the listener name specified in the RDS configuration must match the listener name defined in the LDS configuration. This ensures that the filter chains are correctly associated with the desired listener.
+Filter chains from Routes are added after any `filter_chains` written in the Listener spec, oldest Route first (by `creationTimestamp`, then name). This order is stable across controller restarts.
 
-This automatic filter chain configuration simplifies the management of filter chains and makes it easier to maintain a clean and organized setup for handling incoming network traffic.
+RDS rejects Routes whose filter chains conflict with each other or with the static `filter_chains` in the Listener spec, before they reach the listener, and reports it on the Route (see [Filter Chain Matching and Conflicts](../rds/README.md#filter-chain-matching-and-conflicts)).
+
+LDS still checks every chain it adds, as a last guard. A Route chain that Envoy would reject next to a chain already on the listener, or one that fails to convert, is skipped and the rest of the listener keeps updating. A skip shows up in the controller log and in `xds_config_error_count`, not on the Route's status. The Route's unused route configuration is left out of the snapshot.
+
+Static `filter_chains` that Envoy cannot tell apart from each other, or that have an invalid match (for example a malformed IP address), fail the listener build. The Listener's status reports the error and the last accepted listener keeps serving.
 
 ## Automatic SDS Secret Configuration
 
@@ -228,3 +232,4 @@ Common issues and solutions:
    - Verify route configurations
    - Check listener name matches in routes
    - Validate filter configurations
+   - A Route missing from the listener with "filter chain conflict" in its status lost to an older Route; see [How a conflict is resolved](../rds/README.md#how-a-conflict-is-resolved)

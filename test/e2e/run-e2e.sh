@@ -264,30 +264,138 @@ run_tests() {
     
     # Test 6: HTTPS route (with self-signed cert - use -k to skip validation)
     log_info "--- Test: HTTPS route ---"
-    # Use --resolve to provide SNI and IP resolution
     local https_code
     https_code=$(curl -s -k -o /dev/null -w "%{http_code}" \
         --connect-to "secure.e2e.local:${envoy_https_port}:${node_ip}:${envoy_https_port}" \
-        "https://secure.e2e.local:${envoy_https_port}/" --max-time 15 2>/dev/null || echo "000")
-    
+        "https://secure.e2e.local:${envoy_https_port}/" --max-time 15 2>/dev/null || true)
+
     if [[ "$https_code" == "200" ]]; then
         log_info "✓ HTTPS route with TLS responded successfully (status: $https_code)"
-    elif [[ "$https_code" != "000" ]]; then
-        # Got some response (even error), TLS is working
+    elif [[ -n "$https_code" && "$https_code" != "000" ]]; then
         log_info "✓ HTTPS/TLS connection established (status: $https_code - backend may not have path)"
     else
-        # Try direct IP with SNI header
-        https_code=$(curl -s -k -o /dev/null -w "%{http_code}" \
-            -H "Host: secure.e2e.local" \
-            "https://${node_ip}:${envoy_https_port}/" --max-time 15 2>/dev/null || echo "000")
-        if [[ "$https_code" != "000" ]]; then
-            log_info "✓ HTTPS/TLS working (status: $https_code)"
-        else
-            log_warn "✗ HTTPS route connection failed"
-            test_failures=$((test_failures + 1))
-        fi
+        log_warn "✗ HTTPS route connection failed"
+        test_failures=$((test_failures + 1))
     fi
-    
+
+    # Test 6b: filter chain selection without SNI and conflict rejection
+    log_info "--- Test: Filter chain selection (no SNI) ---"
+    header_of() {
+        local name=$1; shift
+        curl -sk -D - -o /dev/null --max-time 10 "$@" 2>/dev/null | tr -d '\r' \
+            | awk -v n="$name" -F': ' 'tolower($1)==n {print $2}' || true
+    }
+    lds_rejected() {
+        curl -s "http://${node_ip}:${envoy_admin_port}/stats" | awk -F': ' '$1=="listener_manager.lds.update_rejected" {print $2}' || true
+    }
+
+    local chain=""
+    for _ in $(seq 1 6); do
+        chain=$(header_of x-e2e-chain --http1.1 --no-alpn "https://${node_ip}:${envoy_https_port}/healthz")
+        [[ "$chain" == "no-sni-probe" ]] && break
+        sleep 5
+    done
+    if [[ "$chain" == "no-sni-probe" ]]; then
+        log_info "✓ No SNI, no ALPN lands on the probe chain"
+    else
+        log_error "✗ No SNI, no ALPN: expected no-sni-probe, got '$chain'"
+        test_failures=$((test_failures + 1))
+    fi
+
+    chain=$(header_of x-e2e-chain --http2 "https://${node_ip}:${envoy_https_port}/")
+    if [[ "$chain" == "no-sni-alpn" ]]; then
+        log_info "✓ No SNI, ALPN h2 lands on the ALPN chain"
+    else
+        log_error "✗ No SNI, ALPN h2: expected no-sni-alpn, got '$chain'"
+        test_failures=$((test_failures + 1))
+    fi
+
+    local sni_route
+    sni_route=$(header_of x-e2e-test --connect-to "secure.e2e.local:${envoy_https_port}:${node_ip}:${envoy_https_port}" \
+        "https://secure.e2e.local:${envoy_https_port}/")
+    if [[ "$sni_route" == "https-route" ]]; then
+        log_info "✓ SNI still wins over the no-SNI chains"
+    else
+        log_error "✗ SNI request answered by '$sni_route', expected https-route"
+        test_failures=$((test_failures + 1))
+    fi
+
+    log_info "--- Test: Duplicate filter chain rejected by the controller ---"
+    local rejected_before
+    rejected_before=$(lds_rejected)
+    if ! [[ "$rejected_before" =~ ^[0-9]+$ ]]; then
+        log_error "✗ listener_manager.lds.update_rejected not readable from the Envoy admin API"
+        test_failures=$((test_failures + 1))
+    fi
+    cat <<'ROUTEEOF' | kubectl apply -f -
+apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata:
+  name: no-sni-probe-dup
+  namespace: xds-system
+  annotations:
+    clusters: "e2e-test"
+    nodes: "e2e-test-node"
+spec:
+  listener_refs:
+    - https-complex
+  tlssecret_ref: e2e-wildcard-cert
+  filter_chain_match:
+    source_prefix_ranges:
+      - address_prefix: 0.0.0.0
+        prefix_len: 0
+  stat_prefix: no-sni-probe-dup
+  codec_type: AUTO
+  route_config:
+    name: no_sni_probe_dup
+    virtual_hosts:
+      - name: dup
+        domains: ["*"]
+        routes:
+          - match: {prefix: /}
+            direct_response: {status: 503}
+  http_filters:
+    - name: envoy.filters.http.router
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+ROUTEEOF
+
+    local dup_cond=""
+    for _ in $(seq 1 12); do
+        dup_cond=$(kubectl get route no-sni-probe-dup -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Error")].status}' 2>/dev/null || true)
+        [[ "$dup_cond" == "True" ]] && break
+        sleep 5
+    done
+    local dup_msg
+    dup_msg=$(kubectl get route no-sni-probe-dup -n "$NAMESPACE" -o jsonpath='{.status.message}' 2>/dev/null || true)
+    if [[ "$dup_cond" == "True" && "$dup_msg" == *"older route 'no-sni-probe-route'"* ]]; then
+        log_info "✓ Duplicate reported on the Route: $dup_msg"
+    else
+        log_error "✗ Duplicate not reported (Error='$dup_cond', message='$dup_msg')"
+        test_failures=$((test_failures + 1))
+    fi
+
+    # Longer than an LDS rebuild plus one snapshot tick, so a pushed duplicate would show up.
+    sleep 15
+    local rejected_after
+    rejected_after=$(lds_rejected)
+    if [[ "$rejected_after" =~ ^[0-9]+$ && "$rejected_before" == "$rejected_after" ]]; then
+        log_info "✓ Envoy rejected no LDS update"
+    else
+        log_error "✗ listener_manager.lds.update_rejected went ${rejected_before} -> ${rejected_after}"
+        test_failures=$((test_failures + 1))
+    fi
+
+    chain=$(header_of x-e2e-chain --http1.1 --no-alpn "https://${node_ip}:${envoy_https_port}/healthz")
+    if [[ "$chain" == "no-sni-probe" ]]; then
+        log_info "✓ Original probe chain still served"
+    else
+        log_error "✗ Probe now answered by '$chain'"
+        test_failures=$((test_failures + 1))
+    fi
+    kubectl delete route no-sni-probe-dup -n "$NAMESPACE" --ignore-not-found
+
     # Test 7: Redirect path
     log_info "--- Test: Redirect path ---"
     local redirect_response

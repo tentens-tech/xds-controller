@@ -31,65 +31,6 @@ import (
 	"github.com/tentens-tech/xds-controller/pkg/xds/types/lds"
 )
 
-func TestHasFilterChainDuplicates(t *testing.T) {
-	tests := []struct {
-		name          string
-		domains       []string
-		searchDomains []string
-		want          bool
-	}{
-		{
-			name:          "no overlap",
-			domains:       []string{"example.com", "test.com"},
-			searchDomains: []string{"other.com", "another.com"},
-			want:          false,
-		},
-		{
-			name:          "exact match",
-			domains:       []string{"example.com", "test.com"},
-			searchDomains: []string{"example.com"},
-			want:          true,
-		},
-		{
-			name:          "multiple matches",
-			domains:       []string{"example.com", "test.com"},
-			searchDomains: []string{"example.com", "test.com"},
-			want:          true,
-		},
-		{
-			name:          "empty domains",
-			domains:       []string{},
-			searchDomains: []string{"example.com"},
-			want:          false,
-		},
-		{
-			name:          "empty search domains",
-			domains:       []string{"example.com"},
-			searchDomains: []string{},
-			want:          false,
-		},
-		{
-			name:          "both empty",
-			domains:       []string{},
-			searchDomains: []string{},
-			want:          false,
-		},
-		{
-			name:          "partial match in longer list",
-			domains:       []string{"a.com", "b.com", "c.com"},
-			searchDomains: []string{"d.com", "b.com", "e.com"},
-			want:          true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := hasFilterChainDuplicates(tt.domains, tt.searchDomains)
-			assert.Equal(t, tt.want, result)
-		})
-	}
-}
-
 func TestConfigSource(t *testing.T) {
 	result := configSource()
 	assert.NotNil(t, result)
@@ -522,41 +463,6 @@ func TestErrorDuplicateFound(t *testing.T) {
 	assert.NotNil(t, ErrorDuplicateFound)
 	assert.Error(t, ErrorDuplicateFound)
 	assert.Contains(t, ErrorDuplicateFound.Error(), "duplicate found")
-}
-
-func TestHasFilterChainDuplicates_WildcardDomains(t *testing.T) {
-	tests := []struct {
-		name          string
-		domains       []string
-		searchDomains []string
-		want          bool
-	}{
-		{
-			name:          "wildcard match",
-			domains:       []string{"*.example.com"},
-			searchDomains: []string{"*.example.com"},
-			want:          true,
-		},
-		{
-			name:          "wildcard no match",
-			domains:       []string{"*.example.com"},
-			searchDomains: []string{"*.other.com"},
-			want:          false,
-		},
-		{
-			name:          "mixed with wildcards",
-			domains:       []string{"example.com", "*.test.com"},
-			searchDomains: []string{"*.test.com"},
-			want:          true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := hasFilterChainDuplicates(tt.domains, tt.searchDomains)
-			assert.Equal(t, tt.want, result)
-		})
-	}
 }
 
 func TestUpdateCondition_StatusTransition(t *testing.T) {

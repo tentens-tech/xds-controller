@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+
+	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 )
 
 // NodeInfo contains node and cluster information parsed from annotations.
@@ -32,15 +34,11 @@ type NodeInfo struct {
 func GetNodeID(an map[string]string) string {
 	// get nodes and clusters from annotations which divided by comma and put it into a NodeInfo json
 	nodeInfo := NodeInfo{}
-	if an["nodes"] != "" {
-		// split nodes by comma and sort before put it into NodeInfo json
-		nodes := strings.Split(an["nodes"], ",")
+	if nodes := ParseCSV(an["nodes"]); len(nodes) > 0 {
 		sort.Strings(nodes)
 		nodeInfo.Nodes = nodes
 	}
-	if an["clusters"] != "" {
-		// split clusters by comma and sort before put it into NodeInfo json
-		clusters := strings.Split(an["clusters"], ",")
+	if clusters := ParseCSV(an["clusters"]); len(clusters) > 0 {
 		sort.Strings(clusters)
 		nodeInfo.Clusters = clusters
 	}
@@ -108,14 +106,45 @@ func (n NodeInfo) FindNodeAndCluster(nodeid string) bool {
 	return false
 }
 
-// ParseCSV splits a comma-separated string into trimmed parts.
+// ParseCSV splits a comma-separated string into trimmed, non-empty parts.
 func ParseCSV(s string) []string {
-	if s == "" {
-		return []string{}
-	}
-	parts := strings.Split(s, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
+	parts := []string{}
+	for p := range strings.SplitSeq(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			parts = append(parts, p)
+		}
 	}
 	return parts
+}
+
+// NodeIDs returns one node ID per cluster/node pair named in the "nodes" and
+// "clusters" annotations, falling back to the defaults when either is empty.
+func NodeIDs(annotations map[string]string, defaultNode, defaultCluster string) []string {
+	// An empty entry would otherwise encode as "no node" and be published to the default node.
+	nodesList := ParseCSV(annotations["nodes"])
+	if len(nodesList) == 0 {
+		nodesList = ParseCSV(defaultNode)
+	}
+	clustersList := ParseCSV(annotations["clusters"])
+	if len(clustersList) == 0 {
+		clustersList = ParseCSV(defaultCluster)
+	}
+	sort.Strings(nodesList)
+	sort.Strings(clustersList)
+
+	ids := make([]string, 0, len(nodesList)*len(clustersList))
+	for _, cluster := range clustersList {
+		for _, node := range nodesList {
+			ids = append(ids, GetNodeID(map[string]string{"clusters": cluster, "nodes": node}))
+		}
+	}
+	return ids
+}
+
+// OlderRoute reports whether a takes precedence over b: earlier creation first, then name.
+func OlderRoute(a, b *envoyxdsv1alpha1.Route) bool {
+	if !a.CreationTimestamp.Equal(&b.CreationTimestamp) {
+		return a.CreationTimestamp.Before(&b.CreationTimestamp)
+	}
+	return a.Name < b.Name
 }

@@ -20,9 +20,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -104,14 +104,17 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 	"github.com/tentens-tech/xds-controller/controllers/util"
 	"github.com/tentens-tech/xds-controller/pkg/xds"
+	"github.com/tentens-tech/xds-controller/pkg/xds/fcm"
 	hcmtypes "github.com/tentens-tech/xds-controller/pkg/xds/types/hcm"
 	_ "github.com/tentens-tech/xds-controller/pkg/xds/types/route" // imported for RouteSpec embedding
 )
@@ -119,15 +122,17 @@ import (
 // ListenerReconciler reconciles a Listener object
 type ListenerReconciler struct {
 	client.Client
-	Scheme                 *runtime.Scheme
-	Config                 *xds.Config
+	Scheme *runtime.Scheme
+	Config *xds.Config
+	// RouteEvents carries listeners RDS changed; when nil, Route objects are watched directly.
+	RouteEvents            <-chan event.GenericEvent
 	reconciling            atomic.Int32
 	lastReconcileTime      atomic.Int64
 	initialStartLogged     atomic.Bool
 	initialReconcileLogged atomic.Bool
 }
 
-// ErrorDuplicateFound is returned when a duplicate domain is found in filter chains.
+// ErrorDuplicateFound is returned when a route's filter chain would duplicate one already on the listener.
 var ErrorDuplicateFound = errors.New("duplicate found")
 
 //+kubebuilder:rbac:groups=envoyxds.io,resources=listeners,verbs=get;list;watch;create;update;patch;delete
@@ -136,16 +141,24 @@ var ErrorDuplicateFound = errors.New("duplicate found")
 //+kubebuilder:rbac:groups=envoyxds.io,resources=routes/status,verbs=get;update;patch
 
 // Reconcile reconciles the Listener resource.
-func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reconcileErr error) {
 	log := ctrllog.FromContext(ctx)
-	time.Sleep(1 * time.Second)
 
 	r.Config.ReconciliationStatus.SetHasListeners(true)
 
-	// wait for routes and domain configs to be reconciled - requeue only if both are not ready
-	if !r.Config.ReconciliationStatus.IsRoutesReconciled() || !r.Config.ReconciliationStatus.IsDomainConfigsReconciled() {
+	// Wait until RDS has listed and placed routes, so listeners are not built without them.
+	rs := r.Config.ReconciliationStatus
+	if !rs.IsRoutesInitialized() || !rs.IsRoutesReconciled() || !rs.IsDomainConfigsReconciled() {
 		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
 	}
+	// A failed reconcile is retried, so the listener stays pending until a rebuild succeeds.
+	pendingKey := req.String()
+	pendingSeq := rs.ListenerPendingSeq(pendingKey)
+	defer func() {
+		if reconcileErr == nil {
+			rs.ClearListenerPending(pendingKey, pendingSeq)
+		}
+	}()
 
 	// Log only once when LDS actually starts reconciling (dependencies ready)
 	if !r.initialStartLogged.Swap(true) {
@@ -191,6 +204,7 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Build the set of previous nodes where the listener exists
 	previousNodeSet := make(map[string]struct{})
+	r.Config.RLockConfig()
 	for nodeID, listenerList := range r.Config.ListenerConfigs {
 		for _, l := range listenerList {
 			if l.Name == req.Name {
@@ -199,6 +213,7 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			}
 		}
 	}
+	r.Config.RUnlockConfig()
 
 	// If listener not found, remove it and mark as processed
 	if !listenerFound {
@@ -206,37 +221,14 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
-	// Track status update info
-	var statusErr error
-	activeNodes := make([]string, 0, len(r.Config.ListenerConfigs))
-	var filterChainCount int
-
-	// Process the Listener for each node
 	currentNodes := r.getNodesForListener(&listenerCR)
 	hasFilterChans := listenerCR.Spec.FilterChains != nil
+	hasRoutes := r.hasRoutesFor(req.Name, currentNodes)
 
-	hasRoutes := false
-	for _, node := range currentNodes {
-		nodeInfo, _ := util.GetNodeInfo(node) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
-		for routeNode := range r.Config.RouteConfigs {
-			if nodeInfo.FindNodeAndCluster(routeNode) {
-				for _, route := range r.Config.RouteConfigs[routeNode] {
-					for _, listenerName := range route.ListenerNames {
-						if listenerName == req.Name {
-							hasRoutes = true
-							break
-						}
-					}
-					if hasRoutes {
-						break
-					}
-				}
-			}
-		}
-		if hasRoutes {
-			break
-		}
-	}
+	// Track status update info
+	var statusErr error
+	activeNodes := make([]string, 0, len(currentNodes))
+	var filterChainCount int
 
 	// If no routes found, remove listener and mark as processed
 	if !hasFilterChans && !hasRoutes {
@@ -337,71 +329,28 @@ func (r *ListenerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	// Create a debounce map to track the last update time for each listener
-	debounceMap := make(map[string]time.Time)
-	debounceMapMutex := &sync.Mutex{}
-	debounceInterval := 1 * time.Second // Adjust this value based on your needs
-
-	// Map to track the last observed generation of routes
-	routeGenerations := make(map[string]int64)
-	routeGenerationsMutex := &sync.Mutex{}
-
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&envoyxdsv1alpha1.Listener{}).
-		Watches(&envoyxdsv1alpha1.Route{}, handler.EnqueueRequestsFromMapFunc(
+	b := ctrl.NewControllerManagedBy(mgr).For(&envoyxdsv1alpha1.Listener{})
+	if r.RouteEvents != nil {
+		b = b.WatchesRawSource(source.Channel(r.RouteEvents, &handler.EnqueueRequestForObject{}))
+	} else {
+		b = b.Watches(&envoyxdsv1alpha1.Route{}, handler.EnqueueRequestsFromMapFunc(
 			func(_ context.Context, a client.Object) []reconcile.Request {
 				route, ok := a.(*envoyxdsv1alpha1.Route)
 				if !ok || len(route.Spec.ListenerRefs) == 0 {
 					return nil
 				}
-
 				r.Config.ReconciliationStatus.SetListenersReconciled(false)
-
-				// Collect all requests for all listeners
-				var requests []reconcile.Request
-
+				requests := make([]reconcile.Request, 0, len(route.Spec.ListenerRefs))
 				for _, ln := range route.Spec.ListenerRefs {
-					// Get the key for the listener
-					key := fmt.Sprintf("%s/%s", a.GetNamespace(), ln)
-
-					// Get nodeID from route annotations
-					nodeID := util.GetNodeID(a.GetAnnotations())
-					routeKey := fmt.Sprintf("%s/%s#%s", a.GetNamespace(), a.GetName(), nodeID)
-
-					// Get the current generation of the route
-					currentGeneration := a.GetGeneration()
-
-					// Check if this is a new generation of the route
-					routeGenerationsMutex.Lock()
-					lastGeneration, exists := routeGenerations[routeKey]
-					isNewGeneration := !exists || lastGeneration != currentGeneration
-					if isNewGeneration {
-						routeGenerations[routeKey] = currentGeneration
-					}
-					routeGenerationsMutex.Unlock()
-
-					// Check debounce timing
-					debounceMapMutex.Lock()
-					lastUpdate, exists := debounceMap[key]
-					now := time.Now()
-					shouldReconcile := !exists || now.Sub(lastUpdate) > debounceInterval
-
-					if shouldReconcile {
-						debounceMap[key] = now
-						requests = append(requests, reconcile.Request{
-							NamespacedName: types.NamespacedName{
-								Name:      ln,
-								Namespace: a.GetNamespace(),
-							},
-						})
-					}
-					debounceMapMutex.Unlock()
+					requests = append(requests, reconcile.Request{
+						NamespacedName: types.NamespacedName{Name: ln, Namespace: a.GetNamespace()},
+					})
 				}
-
 				return requests
 			}),
-		).
-		Complete(r)
+		)
+	}
+	return b.Complete(r)
 }
 
 func (r *ListenerReconciler) removeListenerFromNodes(ctx context.Context, listenerName string, nodes map[string]struct{}) {
@@ -418,26 +367,6 @@ func (r *ListenerReconciler) removeListenerFromNodes(ctx context.Context, listen
 				r.Config.IncrementConfigCounter()
 			}
 		}
-
-		// Remove associated routes
-		for i := len(r.Config.RouteConfigs[nodeID]) - 1; i >= 0; i-- {
-			route := r.Config.RouteConfigs[nodeID][i]
-			if route.Route == nil {
-				continue
-			}
-
-			// Check if this route is associated with the listener being removed
-			if len(route.Route.Spec.ListenerRefs) > 0 {
-				for _, listenerRef := range route.Route.Spec.ListenerRefs {
-					if listenerRef == listenerName {
-						log.V(0).WithName(listenerName).Info("Removing associated route config", "route", route.Route.Name)
-						r.Config.RouteConfigs[nodeID] = append(r.Config.RouteConfigs[nodeID][:i], r.Config.RouteConfigs[nodeID][i+1:]...)
-						r.Config.IncrementConfigCounter()
-						break
-					}
-				}
-			}
-		}
 	}
 	r.Config.UnlockConfig()
 
@@ -447,7 +376,6 @@ func (r *ListenerReconciler) removeListenerFromNodes(ctx context.Context, listen
 }
 
 func (r *ListenerReconciler) getNodesForListener(listenerCR *envoyxdsv1alpha1.Listener) []string {
-	nodes := []string{}
 	// Set default nodes and clusters if not present
 	if listenerCR.Annotations == nil {
 		listenerCR.Annotations = make(map[string]string)
@@ -459,43 +387,57 @@ func (r *ListenerReconciler) getNodesForListener(listenerCR *envoyxdsv1alpha1.Li
 		listenerCR.Annotations["clusters"] = r.Config.Cluster
 	}
 
-	// Parse nodes and clusters from annotations
-	nodesList := util.ParseCSV(listenerCR.Annotations["nodes"])
-	clustersList := util.ParseCSV(listenerCR.Annotations["clusters"])
-
-	// Sort nodes and clusters for consistent NodeID generation
-	sort.Strings(nodesList)
-	sort.Strings(clustersList)
-
-	for _, cluster := range clustersList {
-		for _, node := range nodesList {
-			nodeID := util.GetNodeID(map[string]string{"clusters": cluster, "nodes": node})
-			nodes = append(nodes, nodeID)
-		}
-	}
-	return nodes
+	return util.NodeIDs(listenerCR.Annotations, r.Config.NodeID, r.Config.Cluster)
 }
 
+// getRoutesForNode returns routes attached to listener l on the node, oldest first so
+// duplicate resolution and filter chain order are stable across restarts.
 func (r *ListenerReconciler) getRoutesForNode(l envoyxdsv1alpha1.Listener, nodeid string) []*envoyxdsv1alpha1.Route {
 	var nodeRoutes []*envoyxdsv1alpha1.Route
 	nodeInfo, _ := util.GetNodeInfo(nodeid) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
-	for node := range r.Config.RouteConfigs {
-		if nodeInfo.FindNodeAndCluster(node) {
-			for _, route := range r.Config.RouteConfigs[node] {
-				// Get listener_refs from spec and check if current listener is included
-				if route.Route != nil && len(route.Route.Spec.ListenerRefs) > 0 {
-					for _, ln := range route.Route.Spec.ListenerRefs {
-						if ln == l.Name {
-							nodeRoutes = append(nodeRoutes, route.Route)
-							break
-						}
-					}
+	r.Config.RLockConfig()
+	for node, routes := range r.Config.RouteConfigs {
+		if !nodeInfo.FindNodeAndCluster(node) {
+			continue
+		}
+		for _, rc := range routes {
+			if rc.Route != nil && slices.Contains(rc.Route.Spec.ListenerRefs, l.Name) {
+				nodeRoutes = append(nodeRoutes, rc.Route)
+			}
+		}
+	}
+	r.Config.RUnlockConfig()
+
+	slices.SortFunc(nodeRoutes, func(a, b *envoyxdsv1alpha1.Route) int {
+		switch {
+		case util.OlderRoute(a, b):
+			return -1
+		case util.OlderRoute(b, a):
+			return 1
+		}
+		return 0
+	})
+	return nodeRoutes
+}
+
+// hasRoutesFor reports whether any route on the given nodes attaches to the listener.
+func (r *ListenerReconciler) hasRoutesFor(listener string, nodes []string) bool {
+	r.Config.RLockConfig()
+	defer r.Config.RUnlockConfig()
+	for _, node := range nodes {
+		nodeInfo, _ := util.GetNodeInfo(node) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
+		for routeNode, routes := range r.Config.RouteConfigs {
+			if !nodeInfo.FindNodeAndCluster(routeNode) {
+				continue
+			}
+			for _, rc := range routes {
+				if slices.Contains(rc.ListenerNames, listener) {
+					return true
 				}
 			}
 		}
 	}
-
-	return nodeRoutes
+	return false
 }
 
 func (r *ListenerReconciler) updateListenerConfig(ctx context.Context, node string, lds *listenerv3.Listener) {
@@ -739,24 +681,13 @@ func ListenerRecast(l envoyxdsv1alpha1.Listener, routes []*envoyxdsv1alpha1.Rout
 }
 
 func configSource() *corev3.ConfigSource {
-	source := &corev3.ConfigSource{}
-	source.ResourceApiVersion = resource.DefaultAPIVersion
-	source.ConfigSourceSpecifier = &corev3.ConfigSource_Ads{
+	cs := &corev3.ConfigSource{}
+	cs.ResourceApiVersion = resource.DefaultAPIVersion
+	cs.ConfigSourceSpecifier = &corev3.ConfigSource_Ads{
 		Ads: &corev3.AggregatedConfigSource{},
 	}
 
-	return source
-}
-
-func hasFilterChainDuplicates(domains, searchDomains []string) bool {
-	for _, domain := range domains {
-		for _, searchDomain := range searchDomains {
-			if domain == searchDomain {
-				return true
-			}
-		}
-	}
-	return false
+	return cs
 }
 
 func prepareFilters(route envoyxdsv1alpha1.Route, lds *listenerv3.Listener) ([]*listenerv3.Filter, error) {
@@ -833,35 +764,57 @@ func prepareFilters(route envoyxdsv1alpha1.Route, lds *listenerv3.Listener) ([]*
 }
 
 func processRoutes(routes []*envoyxdsv1alpha1.Route, lds *listenerv3.Listener, node string) (*listenerv3.Listener, error) {
-	for _, route := range routes {
-		if err := processRoute(route, lds, node); err != nil {
-			if errors.Is(err, ErrorDuplicateFound) {
-				continue
-			}
-			return nil, err
+	placed := make([]*fcm.Matcher, 0, len(lds.FilterChains)+len(routes))
+	for _, fc := range lds.FilterChains {
+		m, err := fcm.CompileProto(fc.GetFilterChainMatch())
+		if err != nil {
+			return nil, fmt.Errorf("filter chain %q: %w", fc.GetName(), err)
 		}
+		for _, p := range placed {
+			if m.Compare(p) == fcm.Duplicate {
+				return nil, fmt.Errorf("filter chain %q: Envoy cannot tell it apart from another chain in spec.filter_chains", fc.GetName())
+			}
+		}
+		placed = append(placed, m)
+	}
+	for _, route := range routes {
+		m, err := processRoute(route, lds, node, placed)
+		if errors.Is(err, ErrorDuplicateFound) {
+			continue
+		}
+		if err != nil {
+			// One bad route must not stop the rest of the listener from updating.
+			ctrllog.FromContext(context.Background()).Error(err, "route skipped", "route", route.Name, "listener", lds.GetName())
+			xds.RecordConfigError(route.Name, "LDS", err.Error())
+			continue
+		}
+		placed = append(placed, m)
 	}
 	return lds, nil
 }
 
-func processRoute(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listener, node string) error {
+func processRoute(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listener, node string, placed []*fcm.Matcher) (*fcm.Matcher, error) {
 	var routeFCM *listenerv3.FilterChainMatch
 	var err error
 
 	if route.Spec.FilterChainMatch != nil {
 		routeFCM, err = unmarshalFilterChainMatch(route)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	if duplicateFound(lds, route, routeFCM, node) {
-		return ErrorDuplicateFound
+	m, err := fcm.CompileProto(routeFCM)
+	if err != nil {
+		return nil, fmt.Errorf("route %q: %w", route.Name, err)
+	}
+	if duplicateFound(route, m, placed, node) {
+		return nil, ErrorDuplicateFound
 	}
 
 	filters, err := prepareFilters(*route, lds)
 	if err != nil {
-		return fmt.Errorf("unable to prepare filter: %w", err)
+		return nil, fmt.Errorf("unable to prepare filter: %w", err)
 	}
 
 	filterChain := &listenerv3.FilterChain{
@@ -873,7 +826,7 @@ func processRoute(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listener, node 
 
 	lds.FilterChains = append(lds.FilterChains, filterChain)
 
-	return nil
+	return m, nil
 }
 
 func unmarshalFilterChainMatch(route *envoyxdsv1alpha1.Route) (*listenerv3.FilterChainMatch, error) {
@@ -888,14 +841,18 @@ func unmarshalFilterChainMatch(route *envoyxdsv1alpha1.Route) (*listenerv3.Filte
 	return routeFCM, nil
 }
 
-func duplicateFound(lds *listenerv3.Listener, route *envoyxdsv1alpha1.Route, routeFCM *listenerv3.FilterChainMatch, node string) bool {
-	log := ctrllog.FromContext(context.Background())
-	for _, filter := range lds.FilterChains {
-		if filter != nil && filter.FilterChainMatch != nil && hasFilterChainDuplicates(filter.FilterChainMatch.GetServerNames(), routeFCM.GetServerNames()) {
-			nodeInfo, _ := util.GetNodeInfo(node) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
-			log.V(1).Info("unable to add route to listener, duplicate found, skipping", "route", route.Name, "domains", routeFCM.GetServerNames(), "node", nodeInfo.Nodes, "cluster", nodeInfo.Clusters)
-			return true
+// duplicateFound reports whether Envoy would reject the listener for holding both
+// the route's chain and one already placed; the older placement wins.
+func duplicateFound(route *envoyxdsv1alpha1.Route, m *fcm.Matcher, placed []*fcm.Matcher, node string) bool {
+	for _, p := range placed {
+		if m.Compare(p) != fcm.Duplicate {
+			continue
 		}
+		const msg = "filter chain duplicates one already on the listener, route skipped"
+		nodeInfo, _ := util.GetNodeInfo(node) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
+		ctrllog.FromContext(context.Background()).Info(msg, "route", route.Name, "node", nodeInfo.Nodes, "cluster", nodeInfo.Clusters)
+		xds.RecordConfigError(route.Name, "LDS", msg)
+		return true
 	}
 	return false
 }
