@@ -82,7 +82,7 @@ func readInputs(files []string) ([]byte, error) {
 		if f == "-" {
 			data, err = io.ReadAll(os.Stdin)
 		} else {
-			data, err = os.ReadFile(f) //nolint:gosec // files the user asked to audit
+			data, err = os.ReadFile(f) // #nosec G304 -- the user names the files to audit
 		}
 		if err != nil {
 			return nil, err
