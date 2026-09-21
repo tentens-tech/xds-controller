@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
 	"github.com/tentens-tech/xds-controller/controllers/cds"
@@ -40,6 +41,9 @@ type controllerDefinition struct {
 // SetupControllers registers all xDS controllers with the manager.
 func SetupControllers(mgr ctrl.Manager, config *xds.Config) error {
 	log := ctrl.Log.WithName("setup")
+
+	// RDS tells LDS which listeners to rebuild after it changes route placement.
+	listenerEvents := make(chan event.GenericEvent, 1024)
 
 	controllers := []controllerDefinition{
 		{
@@ -66,9 +70,10 @@ func SetupControllers(mgr ctrl.Manager, config *xds.Config) error {
 			name: "Route",
 			setup: func(mgr ctrl.Manager, config *xds.Config) error {
 				return (&rds.RouteReconciler{
-					Client: mgr.GetClient(),
-					Scheme: mgr.GetScheme(),
-					Config: config,
+					Client:         mgr.GetClient(),
+					Scheme:         mgr.GetScheme(),
+					Config:         config,
+					ListenerEvents: listenerEvents,
 				}).SetupWithManager(mgr)
 			},
 		},
@@ -76,9 +81,10 @@ func SetupControllers(mgr ctrl.Manager, config *xds.Config) error {
 			name: "Listener",
 			setup: func(mgr ctrl.Manager, config *xds.Config) error {
 				return (&lds.ListenerReconciler{
-					Client: mgr.GetClient(),
-					Scheme: mgr.GetScheme(),
-					Config: config,
+					Client:      mgr.GetClient(),
+					Scheme:      mgr.GetScheme(),
+					Config:      config,
+					RouteEvents: listenerEvents,
 				}).SetupWithManager(mgr)
 			},
 		},

@@ -19,9 +19,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -96,15 +97,17 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 	"github.com/tentens-tech/xds-controller/controllers/util"
 	"github.com/tentens-tech/xds-controller/pkg/xds"
-	"github.com/tentens-tech/xds-controller/pkg/xds/types/lds"
+	"github.com/tentens-tech/xds-controller/pkg/xds/fcm"
 	rdstypes "github.com/tentens-tech/xds-controller/pkg/xds/types/rds"
 	routetypes "github.com/tentens-tech/xds-controller/pkg/xds/types/route"
 )
@@ -112,8 +115,13 @@ import (
 // RouteReconciler reconciles a Route object
 type RouteReconciler struct {
 	client.Client
-	Scheme                 *runtime.Scheme
-	Config                 *xds.Config
+	Scheme *runtime.Scheme
+	Config *xds.Config
+	// ListenerEvents receives listeners whose filter chains changed; nil disables notification.
+	ListenerEvents         chan<- event.GenericEvent
+	requeue                chan event.GenericEvent
+	losersMu               sync.Mutex
+	losers                 map[types.NamespacedName]map[types.NamespacedName]struct{}
 	reconciling            atomic.Int32
 	lastReconcileTime      atomic.Int64
 	initialReconcileLogged atomic.Bool
@@ -123,15 +131,7 @@ type RouteReconciler struct {
 //+kubebuilder:rbac:groups=envoyxds.io,resources=routes/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=envoyxds.io,resources=routes/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Route object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.1/pkg/reconcile
+// Reconcile places the Route on its nodes, resolving filter chain conflicts by age.
 func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 
@@ -173,52 +173,23 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		routeConfigFound = false
 	}
 
-	// Build the set of previous nodes where the routes exists
-	previousNodeSet := make(map[string]struct{})
-	for nodeID, routes := range r.Config.RouteConfigs {
-		for _, r := range routes {
-			if r.Route.Name == req.Name {
-				previousNodeSet[nodeID] = struct{}{}
-				break
-			}
-		}
-	}
+	r.Config.RLockConfig()
+	previous := r.routePlacement(req.Name)
+	r.Config.RUnlockConfig()
 
-	// If route not found, remove it and mark as processed
+	// Routes this one evicted may win now that it changed or is gone.
+	defer r.requeueLosers(ctx, req.NamespacedName)
+
 	if !routeConfigFound {
-		r.removeRouteFromNodes(ctx, req.Name, previousNodeSet)
+		r.notifyListeners(ctx, req.Namespace, r.removeRouteFromNodes(ctx, req.Name, previous.nodes))
 		return ctrl.Result{}, nil
 	}
 
-	// Get listener names from spec.listener_refs
 	listenerNames := rd.Spec.ListenerRefs
 	if len(listenerNames) == 0 {
-		log.V(1).WithName(req.Name).Info("listener_refs not set on route")
+		r.unplace(ctx, &rd, previous, "listener_refs not set, route is not served")
 		return ctrl.Result{}, nil
 	}
-
-	currentNodes := r.getNodesForRoute(ctx, &rd, listenerNames, req)
-
-	if len(currentNodes) == 0 {
-		r.removeRouteFromNodes(ctx, req.Name, previousNodeSet)
-		return ctrl.Result{}, nil
-	}
-
-	// Build the set of current nodes
-	currentNodeSet := make(map[string]struct{})
-	for _, node := range currentNodes {
-		currentNodeSet[node] = struct{}{}
-	}
-
-	// Remove routes from nodes where it no longer belongs
-	nodesToRemove := make(map[string]struct{})
-	for nodeID := range previousNodeSet {
-		if _, exists := currentNodeSet[nodeID]; !exists {
-			nodesToRemove[nodeID] = struct{}{}
-			delete(currentNodeSet, nodeID)
-		}
-	}
-	r.removeRouteFromNodes(ctx, req.Name, nodesToRemove)
 
 	rds, err := RouteRecast(rd.Spec.Route)
 	if err != nil {
@@ -227,86 +198,79 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			log.V(1).Info("you need te add import in rds controller to fix this error, example: 	_ \"github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/cors/v3\"")
 		}
 		xds.RecordConfigError(rd.Name, "RDS", "you need te add import in rds controller to fix this error, example: 	_ \"github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/cors/v3\"")
-		// Update status with error
 		if statusErr := r.updateRouteStatus(ctx, &rd, false, nil, listenerNames, 0, err.Error()); statusErr != nil {
 			log.Error(statusErr, "unable to update Route status")
 		}
 		return ctrl.Result{}, nil
 	}
-
 	rds.Name = rd.Name
-	var currentMatch *lds.FilterChainMatch
-	if rd.Spec.FilterChainMatch != nil {
-		currentMatch = rd.Spec.FilterChainMatch
+
+	// An invalid matcher would make Envoy reject the listener, so the last good version keeps serving.
+	matcher, err := fcm.Compile(rd.Spec.FilterChainMatch)
+	if err != nil {
+		errMsg := "invalid filter_chain_match: " + err.Error()
+		log.Error(err, "invalid filter_chain_match")
+		xds.RecordConfigError(rd.Name, "RDS", errMsg)
+		if statusErr := r.updateRouteStatus(ctx, &rd, false, nil, listenerNames, 0, errMsg); statusErr != nil {
+			log.Error(statusErr, "unable to update Route status")
+		}
+		return ctrl.Result{}, nil
 	}
-	currentTime := rd.CreationTimestamp.Time
 
-	// Validate domains against existing RouteConfigurations
-	for node := range r.Config.RouteConfigs {
-		nodeInfo, _ := util.GetNodeInfo(node) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
-		for _, existingRC := range r.Config.RouteConfigs[node] {
-			if existingRC.Route.Name == rds.Name {
-				continue // Skip comparing with itself
-			}
+	currentNodes := r.getNodesForRoute(ctx, &rd, listenerNames, req)
+	if len(currentNodes) == 0 {
+		r.unplace(ctx, &rd, previous, "no listener in listener_refs exists on the route's nodes")
+		return ctrl.Result{}, nil
+	}
 
-			// Get the existing route to check its timestamp
-			existingRoute := *existingRC.Route
+	currentNodeSet := make(map[string]struct{}, len(currentNodes))
+	for _, node := range currentNodes {
+		currentNodeSet[node] = struct{}{}
+	}
 
-			existingTime := existingRoute.CreationTimestamp.Time
-			existingMatch := existingRoute.Spec.FilterChainMatch
+	nodesToRemove := make(map[string]struct{})
+	for nodeID := range previous.nodes {
+		if _, exists := currentNodeSet[nodeID]; !exists {
+			nodesToRemove[nodeID] = struct{}{}
+		}
+	}
+	r.notifyListeners(ctx, req.Namespace, r.removeRouteFromNodes(ctx, req.Name, nodesToRemove))
 
-			// First check filter chain overlap
-			if hasFilterChainOverlap(existingMatch, currentMatch) {
-				// Then check if the virtual hosts actually overlap
-				if hasRouteConfigOverlap(&existingRoute.Spec.Route, &rd.Spec.Route, existingMatch, currentMatch) {
-					if currentTime.After(existingTime) {
-						// Current route is newer - return error
-						errMsg := fmt.Sprintf(
-							"filter chain match overlap detected: route '%s' (created: %s) conflicts with older route '%s' (created: %s) in nodes %v, clusters %v.\nConflicting criteria:\nServerNames: %v\n",
-							rds.Name,
-							currentTime.Format(time.RFC3339),
-							existingRC.RouteConfiguration.Name,
-							existingTime.Format(time.RFC3339),
-							nodeInfo.Nodes,
-							nodeInfo.Clusters,
-							currentMatch.ServerNames,
-						)
-						r.Config.LockConfig()
-						r.Config.RouteConfigs[node] = r.deleteRouteConfig(node, rds.Name)
-						r.Config.UnlockConfig()
-						log.Error(fmt.Errorf("%s", errMsg), "filter chain match conflict")
-						xds.RecordConfigError(rds.Name, "RDS", errMsg)
-						// Update status with error
-						if statusErr := r.updateRouteStatus(ctx, &rd, false, nil, listenerNames, 0, errMsg); statusErr != nil {
-							log.Error(statusErr, "unable to update Route status")
-						}
-						return ctrl.Result{}, nil
-					} else {
-						// Current route is older - remove newer route and continue with adding this one
-						log.V(1).Info(fmt.Sprintf("removing newer route '%s' as it conflicts with older route '%s'", existingRC.Route.Name, rds.Name))
-						r.Config.LockConfig()
-						r.Config.RouteConfigs[node] = r.deleteRouteConfig(node, existingRC.Route.Name)
-						r.Config.UnlockConfig()
+	if listener := r.staticChainConflict(ctx, &rd, matcher, currentNodeSet); listener != "" {
+		r.reject(ctx, &rd, previous, fmt.Sprintf("filter chain duplicates one defined in Listener '%s' spec.filter_chains", listener))
+		return ctrl.Result{}, nil
+	}
 
-						// Record error for the removed route
-						errMsg := fmt.Sprintf(
-							"route removed due to filter chain match overlap with older route '%s' (created: %s) match %v",
-							rds.Name,
-							currentTime.Format(time.RFC3339),
-							currentMatch,
-						)
-						log.Error(fmt.Errorf("%s", errMsg), "filter chain match conflict")
-						xds.RecordConfigError(existingRC.RouteConfiguration.Name, "RDS", errMsg)
-					}
-				}
+	r.Config.RLockConfig()
+	conflicts := r.findConflicts(&rd, matcher, currentNodeSet)
+	r.Config.RUnlockConfig()
+
+	if len(conflicts) > 0 && util.OlderRoute(conflicts[0].route, &rd) {
+		for _, c := range conflicts {
+			if util.OlderRoute(c.route, &rd) {
+				r.addLoser(client.ObjectKeyFromObject(c.route), req.NamespacedName)
 			}
 		}
+		winner := conflicts[0]
+		r.reject(ctx, &rd, previous, fmt.Sprintf("filter chain conflict with older route '%s' (created %s): %s",
+			winner.route.Name, winner.route.CreationTimestamp.Format(time.RFC3339), conflictReason(winner.verdict)))
+		return ctrl.Result{}, nil
+	}
+
+	for _, c := range conflicts {
+		errMsg := fmt.Sprintf("route removed: filter chain conflict with older route '%s': %s", rd.Name, conflictReason(c.verdict))
+		log.Error(fmt.Errorf("%s", errMsg), "filter chain match conflict", "evicted", c.route.Name)
+		xds.RecordConfigError(c.route.Name, "RDS", errMsg)
+		r.notifyListeners(ctx, c.route.Namespace, r.removeRouteEverywhere(ctx, c.route.Name))
+		r.enqueueRoute(ctx, client.ObjectKeyFromObject(c.route))
 	}
 
 	var updated bool
-	// Update or add routes to the current nodes
 	for _, node := range currentNodes {
-		updated = r.updateRouteConfig(node, listenerNames, &rd, rds)
+		updated = r.updateRouteConfig(node, listenerNames, &rd, rds, matcher)
+	}
+	if !previous.same(currentNodeSet, listenerNames, rd.Generation) {
+		r.notifyListeners(ctx, req.Namespace, mergeNames(previous.listeners, listenerNames))
 	}
 
 	if updated {
@@ -315,13 +279,11 @@ func (r *RouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		log.V(2).Info("Added route")
 	}
 
-	// Count virtual hosts
 	virtualHostCount := 0
 	if rd.Spec.RouteConfig != nil && rd.Spec.RouteConfig.VirtualHosts != nil {
 		virtualHostCount = len(rd.Spec.RouteConfig.VirtualHosts)
 	}
 
-	// Update status
 	if statusErr := r.updateRouteStatus(ctx, &rd, true, currentNodes, listenerNames, virtualHostCount, ""); statusErr != nil {
 		log.Error(statusErr, "unable to update Route status")
 	}
@@ -362,58 +324,29 @@ func (r *RouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	r.requeue = make(chan event.GenericEvent, 256)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&envoyxdsv1alpha1.Route{}).
-		Watches(&envoyxdsv1alpha1.Listener{}, handler.EnqueueRequestsFromMapFunc(
-			func(ctx context.Context, a client.Object) []reconcile.Request {
-				listenerObj, ok := a.(*envoyxdsv1alpha1.Listener)
-				if !ok {
-					return nil
-				}
-				log := ctrllog.FromContext(ctx)
-
-				// Check if the listener still exists
-				var existingListener envoyxdsv1alpha1.Listener
-				err := r.Get(context.Background(), types.NamespacedName{
-					Name:      listenerObj.Name,
-					Namespace: listenerObj.Namespace,
-				}, &existingListener)
-
-				if err != nil || apierrors.IsNotFound(err) {
-					return nil
-				}
-
-				// Get routes that reference this listener
-				var routeList envoyxdsv1alpha1.RouteList
-				if err := r.List(context.Background(), &routeList, &client.ListOptions{
-					Namespace: a.GetNamespace(),
-				}); err != nil {
-					log.Error(err, "Failed to list routes")
-					return nil
-				}
-
-				var requests []reconcile.Request
-				// Check each route for the listener name
-				for _, route := range routeList.Items {
-					if len(route.Spec.ListenerRefs) > 0 {
-						for _, name := range route.Spec.ListenerRefs {
-							if name == listenerObj.Name {
-								requests = append(requests, reconcile.Request{
-									NamespacedName: types.NamespacedName{
-										Name:      route.Name,
-										Namespace: route.Namespace,
-									},
-								})
-								break
-							}
-						}
-					}
-				}
-
-				return requests
-			}),
-		).
+		WatchesRawSource(source.Channel(r.requeue, &handler.EnqueueRequestForObject{})).
+		Watches(&envoyxdsv1alpha1.Listener{}, handler.EnqueueRequestsFromMapFunc(r.routesForListener)).
 		Complete(r)
+}
+
+// routesForListener maps a Listener event, including its deletion, to the routes that reference it.
+func (r *RouteReconciler) routesForListener(ctx context.Context, listener client.Object) []reconcile.Request {
+	var routeList envoyxdsv1alpha1.RouteList
+	if err := r.List(ctx, &routeList, client.InNamespace(listener.GetNamespace())); err != nil {
+		ctrllog.FromContext(ctx).Error(err, "Failed to list routes")
+		return nil
+	}
+	var requests []reconcile.Request
+	for _, route := range routeList.Items {
+		if slices.Contains(route.Spec.ListenerRefs, listener.GetName()) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&route)})
+		}
+	}
+	return requests
 }
 
 // RouteRecast converts Route types to Envoy RouteConfiguration.
@@ -435,187 +368,185 @@ func RouteRecast(r routetypes.Route) (*routev3.RouteConfiguration, error) {
 	return routeConfig, nil
 }
 
-func matchDomainName(pattern, domain string) bool {
-	// Clean up the domains by removing any trailing dots
-	pattern = strings.TrimSuffix(pattern, ".")
-	domain = strings.TrimSuffix(domain, ".")
+type routeConflict struct {
+	route   *envoyxdsv1alpha1.Route
+	verdict fcm.Verdict
+}
 
-	if pattern == domain {
-		return true
+// RouteConflict reports how the filter chains of routes a and b collide once placed on a shared node.
+func RouteConflict(a, b *envoyxdsv1alpha1.Route, ma, mb *fcm.Matcher) fcm.Verdict {
+	if !sharesName(a.Spec.ListenerRefs, b.Spec.ListenerRefs) {
+		return fcm.None
 	}
+	v := ma.Compare(mb)
+	if v == fcm.Shadow && !virtualHostsOverlap(a.Spec.RouteConfig, b.Spec.RouteConfig) {
+		return fcm.None
+	}
+	return v
+}
 
-	// Handle wildcard domains
-	if strings.HasPrefix(pattern, "*.") {
-		// For wildcard match, we need to:
-		// 1. Extract the base domain after *. (e.g., "*.example.com" -> "example.com")
-		// 2. Ensure the domain has exactly one subdomain level
-		// 3. Check if the base domains match
-		baseDomain := pattern[2:] // Skip the *. part
-		domainParts := strings.Split(domain, ".")
+func conflictReason(v fcm.Verdict) string {
+	if v == fcm.Shadow {
+		return "server_names overlap through a wildcard and virtual host domains overlap"
+	}
+	return "Envoy rejects a listener holding both filter chains (same matching rules)"
+}
 
-		// Must have at least two parts (subdomain + base domain)
-		if len(domainParts) < 2 {
-			return false
+func virtualHostsOverlap(a, b *rdstypes.RDS) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	for _, vh1 := range a.VirtualHosts {
+		for _, vh2 := range b.VirtualHosts {
+			if hasVirtualHostOverlap(vh1, vh2) {
+				return true
+			}
 		}
-
-		// Get everything after the first part
-		domainSuffix := strings.Join(domainParts[1:], ".")
-		return domainSuffix == baseDomain
 	}
-
-	// Parse URLs to compare hosts
-	patternURL, err := url.Parse("https://" + pattern)
-	if err != nil {
-		return false
-	}
-
-	domainURL, err := url.Parse("https://" + domain)
-	if err != nil {
-		return false
-	}
-
-	return patternURL.Hostname() == domainURL.Hostname()
+	return false
 }
 
 func hasVirtualHostOverlap(vh1, vh2 *rdstypes.VirtualHost) bool {
 	if vh1 == nil || vh2 == nil {
 		return false
 	}
+	return sharesName(vh1.Domains, vh2.Domains)
+}
 
-	// Create domain sets for comparison
-	domains1 := make(map[string]bool)
-	domains2 := make(map[string]bool)
-
-	for _, domain := range vh1.Domains {
-		domains1[domain] = true
-	}
-	for _, domain := range vh2.Domains {
-		domains2[domain] = true
-	}
-
-	// Check for any overlapping domains
-	for domain := range domains1 {
-		if domains2[domain] {
+func sharesName(a, b []string) bool {
+	for _, x := range a {
+		if slices.Contains(b, x) {
 			return true
 		}
 	}
-
 	return false
 }
 
-func hasRouteConfigOverlap(route1, route2 *routetypes.Route, match1, match2 *lds.FilterChainMatch) bool {
-	if route1 == nil || route2 == nil ||
-		route1.RouteConfig == nil || route2.RouteConfig == nil {
+// findConflicts returns routes on the given nodes whose chains cannot coexist with route's,
+// oldest first. Caller holds the config read lock.
+func (r *RouteReconciler) findConflicts(route *envoyxdsv1alpha1.Route, m *fcm.Matcher, nodes map[string]struct{}) []routeConflict {
+	var out []routeConflict
+	seen := make(map[string]struct{})
+	for node := range nodes {
+		for _, rc := range r.Config.RouteConfigs[node] {
+			name := rc.Route.Name
+			if name == route.Name {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+
+			other := rc.Matcher
+			if other == nil {
+				var err error
+				if other, err = fcm.Compile(rc.Route.Spec.FilterChainMatch); err != nil {
+					continue
+				}
+			}
+			if v := RouteConflict(route, rc.Route, m, other); v != fcm.None {
+				out = append(out, routeConflict{route: rc.Route, verdict: v})
+			}
+		}
+	}
+	slices.SortFunc(out, func(x, y routeConflict) int {
+		switch {
+		case util.OlderRoute(x.route, y.route):
+			return -1
+		case util.OlderRoute(y.route, x.route):
+			return 1
+		}
+		return 0
+	})
+	return out
+}
+
+// placement is where a route was served before this reconcile.
+type placement struct {
+	nodes      map[string]struct{}
+	listeners  []string
+	generation int64
+}
+
+func (p placement) same(nodes map[string]struct{}, listeners []string, generation int64) bool {
+	if p.generation != generation || len(p.nodes) != len(nodes) || !slices.Equal(p.listeners, mergeNames(listeners, nil)) {
 		return false
 	}
-
-	// Check if either match has wildcards
-	hasWildcard := func(match *lds.FilterChainMatch) bool {
-		if match == nil || len(match.ServerNames) == 0 {
+	for n := range nodes {
+		if _, ok := p.nodes[n]; !ok {
 			return false
 		}
-		for _, name := range match.ServerNames {
-			if strings.Contains(name, "*") {
-				return true
-			}
-		}
-		return false
 	}
-
-	// If either match has wildcards, we should focus on checking VirtualHosts
-	if hasWildcard(match1) || hasWildcard(match2) {
-		// Check virtual host overlaps
-		for _, vh1 := range route1.RouteConfig.VirtualHosts {
-			for _, vh2 := range route2.RouteConfig.VirtualHosts {
-				if hasVirtualHostOverlap(vh1, vh2) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-
-	// For non-wildcard matches, check filter chain overlap first
-	if hasFilterChainOverlap(match1, match2) {
-		return true
-	}
-
-	return false
-}
-
-func hasFilterChainOverlap(match1, match2 *lds.FilterChainMatch) bool {
-	// If either match is nil, they don't overlap (different types of routes)
-	if match1 == nil || match2 == nil {
-		return false
-	}
-
-	// Check if routes are of the same type by checking which fields are set
-	hasServerNames1 := len(match1.ServerNames) > 0
-	hasServerNames2 := len(match2.ServerNames) > 0
-	if hasServerNames1 != hasServerNames2 {
-		return false
-	}
-
-	hasSourcePrefix1 := len(match1.SourcePrefixRanges) > 0
-	hasSourcePrefix2 := len(match2.SourcePrefixRanges) > 0
-	if hasSourcePrefix1 != hasSourcePrefix2 {
-		return false
-	}
-
-	// Now check overlaps based on the type of route
-
-	// Check destination port overlap (always check if specified)
-	if match1.DestinationPort != nil && match2.DestinationPort != nil && *match1.DestinationPort != *match2.DestinationPort {
-		return false
-	}
-
-	// Check ServerNames overlap
-	if hasServerNames1 {
-		for _, name1 := range match1.ServerNames {
-			for _, name2 := range match2.ServerNames {
-				if matchDomainName(name1, name2) || matchDomainName(name2, name1) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-
-	// Check SourcePrefixRanges overlap
-	if hasSourcePrefix1 {
-		for _, prefix1 := range match1.SourcePrefixRanges {
-			for _, prefix2 := range match2.SourcePrefixRanges {
-				if prefix1.AddressPrefix == prefix2.AddressPrefix && prefix1.PrefixLen == prefix2.PrefixLen {
-					return true
-				}
-			}
-		}
-		return false
-	}
-
-	// If we get here, it means both matches are empty or have the same empty fields
 	return true
 }
 
-// deleteRouteConfig removes a route configuration by name from the specified node
-// and returns the updated route configurations
-func (r *RouteReconciler) deleteRouteConfig(node, routeName string) []*xds.RouteConfig {
-	routes := r.Config.RouteConfigs[node]
-	for i := len(routes) - 1; i >= 0; i-- {
-		route := routes[i]
-		if route.Route.Name == routeName {
-			r.Config.RouteConfigs[node] = append(routes[:i], routes[i+1:]...)
-			r.Config.IncrementConfigCounter()
-			break
+// routePlacement returns where the named route is served. Caller holds the config read lock.
+func (r *RouteReconciler) routePlacement(name string) placement {
+	p := placement{nodes: make(map[string]struct{})}
+	for nodeID, routes := range r.Config.RouteConfigs {
+		for _, rc := range routes {
+			if rc.Route.Name == name {
+				p.nodes[nodeID] = struct{}{}
+				p.listeners = mergeNames(p.listeners, rc.ListenerNames)
+				p.generation = rc.Route.Generation
+				break
+			}
 		}
 	}
-	return r.Config.RouteConfigs[node]
+	return p
+}
+
+// unplace stops serving the route and reports why on its status.
+func (r *RouteReconciler) unplace(ctx context.Context, route *envoyxdsv1alpha1.Route, previous placement, msg string) {
+	r.notifyListeners(ctx, route.Namespace, r.removeRouteFromNodes(ctx, route.Name, previous.nodes))
+	if err := r.updateRouteStatus(ctx, route, false, nil, route.Spec.ListenerRefs, 0, msg); err != nil {
+		ctrllog.FromContext(ctx).Error(err, "unable to update Route status")
+	}
+}
+
+// reject removes the route from every node because its filter chain cannot be served.
+func (r *RouteReconciler) reject(ctx context.Context, route *envoyxdsv1alpha1.Route, previous placement, msg string) {
+	ctrllog.FromContext(ctx).Error(fmt.Errorf("%s", msg), "filter chain match conflict")
+	xds.RecordConfigError(route.Name, "RDS", msg)
+	removed := r.removeRouteEverywhere(ctx, route.Name)
+	r.notifyListeners(ctx, route.Namespace, mergeNames(previous.listeners, removed))
+	if err := r.updateRouteStatus(ctx, route, false, nil, route.Spec.ListenerRefs, 0, msg); err != nil {
+		ctrllog.FromContext(ctx).Error(err, "unable to update Route status")
+	}
+}
+
+// staticChainConflict returns the listener whose own filter_chains Envoy cannot tell apart
+// from the route's chain on a node the route is placed on.
+func (r *RouteReconciler) staticChainConflict(ctx context.Context, route *envoyxdsv1alpha1.Route, m *fcm.Matcher, nodes map[string]struct{}) string {
+	for _, name := range route.Spec.ListenerRefs {
+		var l envoyxdsv1alpha1.Listener
+		if err := r.Get(ctx, types.NamespacedName{Namespace: route.Namespace, Name: name}, &l); err != nil || len(l.Spec.FilterChains) == 0 {
+			continue
+		}
+		onNode := false
+		for _, id := range util.NodeIDs(l.Annotations, r.Config.NodeID, r.Config.Cluster) {
+			if _, ok := nodes[id]; ok {
+				onNode = true
+				break
+			}
+		}
+		if !onNode {
+			continue
+		}
+		for _, fc := range l.Spec.FilterChains {
+			if fc == nil {
+				continue
+			}
+			if sm, err := fcm.Compile(fc.FilterChainMatch); err == nil && m.Compare(sm) == fcm.Duplicate {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func (r *RouteReconciler) getNodesForRoute(ctx context.Context, route *envoyxdsv1alpha1.Route, listenerNames []string, req ctrl.Request) []string {
-	nodes := []string{}
-
-	// Set default nodes and clusters if not present
 	if route.Annotations == nil {
 		route.Annotations = make(map[string]string)
 	}
@@ -625,21 +556,7 @@ func (r *RouteReconciler) getNodesForRoute(ctx context.Context, route *envoyxdsv
 	if route.Annotations["clusters"] == "" {
 		route.Annotations["clusters"] = r.Config.Cluster
 	}
-
-	// Parse nodes and clusters from annotations
-	nodesList := util.ParseCSV(route.Annotations["nodes"])
-	clustersList := util.ParseCSV(route.Annotations["clusters"])
-
-	// Sort nodes and clusters for consistent NodeID generation
-	sort.Strings(nodesList)
-	sort.Strings(clustersList)
-
-	for _, cluster := range clustersList {
-		for _, node := range nodesList {
-			nodeID := util.GetNodeID(map[string]string{"clusters": cluster, "nodes": node})
-			nodes = append(nodes, nodeID)
-		}
-	}
+	nodes := util.NodeIDs(route.Annotations, r.Config.NodeID, r.Config.Cluster)
 
 	isLiExists, unmatchedNodes := r.isListenerExists(ctx, listenerNames, nodes, req)
 	if !isLiExists {
@@ -659,50 +576,127 @@ func (r *RouteReconciler) getNodesForRoute(ctx context.Context, route *envoyxdsv
 	return nodes
 }
 
-func (r *RouteReconciler) removeRouteFromNodes(ctx context.Context, routeName string, nodes map[string]struct{}) {
-	log := ctrllog.FromContext(ctx)
-	var removed bool
+// removeRouteFromNodes removes the route from the given nodes and returns the listeners it was attached to.
+func (r *RouteReconciler) removeRouteFromNodes(ctx context.Context, routeName string, nodes map[string]struct{}) []string {
+	if len(nodes) == 0 {
+		return nil
+	}
+	r.Config.LockConfig()
+	defer r.Config.UnlockConfig()
+	var listeners []string
 	for nodeID := range nodes {
-		for i := len(r.Config.RouteConfigs[nodeID]) - 1; i >= 0; i-- {
-			route := r.Config.RouteConfigs[nodeID][i]
-			if route.Route.Name == routeName {
-				r.Config.LockConfig()
-				r.Config.RouteConfigs[nodeID] = append(r.Config.RouteConfigs[nodeID][:i], r.Config.RouteConfigs[nodeID][i+1:]...)
-				removed = true
-				r.Config.UnlockConfig()
-				r.Config.IncrementConfigCounter()
-			}
-		}
+		listeners = r.removeRouteLocked(nodeID, routeName, listeners)
 	}
-
-	if removed {
-		log.V(0).Info("Removed route")
+	if len(listeners) > 0 {
+		ctrllog.FromContext(ctx).V(0).Info("Removed route", "route", routeName)
 	}
+	return listeners
 }
 
-func (r *RouteReconciler) updateRouteConfig(node string, listenerNames []string, route *envoyxdsv1alpha1.Route, rd *routev3.RouteConfiguration) bool {
+// removeRouteEverywhere removes the route from every node and returns the listeners it was attached to.
+func (r *RouteReconciler) removeRouteEverywhere(ctx context.Context, routeName string) []string {
+	r.Config.LockConfig()
+	defer r.Config.UnlockConfig()
+	var listeners []string
+	for nodeID := range r.Config.RouteConfigs {
+		listeners = r.removeRouteLocked(nodeID, routeName, listeners)
+	}
+	if len(listeners) > 0 {
+		ctrllog.FromContext(ctx).V(0).Info("Removed route", "route", routeName)
+	}
+	return listeners
+}
+
+func (r *RouteReconciler) removeRouteLocked(nodeID, routeName string, listeners []string) []string {
+	routes := r.Config.RouteConfigs[nodeID]
+	for i, rc := range routes {
+		if rc.Route.Name == routeName {
+			r.Config.RouteConfigs[nodeID] = slices.Delete(routes, i, i+1)
+			r.Config.IncrementConfigCounter()
+			return mergeNames(listeners, rc.ListenerNames)
+		}
+	}
+	return listeners
+}
+
+func (r *RouteReconciler) updateRouteConfig(node string, listenerNames []string, route *envoyxdsv1alpha1.Route, rd *routev3.RouteConfiguration, matcher *fcm.Matcher) bool {
 	r.Config.LockConfig()
 	defer r.Config.UnlockConfig()
 	if r.Config.RouteConfigs == nil {
 		r.Config.RouteConfigs = make(map[string][]*xds.RouteConfig)
 	}
 
-	var updated bool
+	rc := &xds.RouteConfig{RouteConfiguration: rd, ListenerNames: listenerNames, Route: route, Matcher: matcher}
+	r.Config.IncrementConfigCounter()
 	for i, ro := range r.Config.RouteConfigs[node] {
 		if ro.Route.Name == route.Name {
-			r.Config.RouteConfigs[node][i] = &xds.RouteConfig{RouteConfiguration: rd, ListenerNames: listenerNames, Route: route}
-			updated = true
-			r.Config.IncrementConfigCounter()
-			break
+			r.Config.RouteConfigs[node][i] = rc
+			return true
 		}
 	}
+	r.Config.RouteConfigs[node] = append(r.Config.RouteConfigs[node], rc)
+	return false
+}
 
-	if !updated {
-		r.Config.RouteConfigs[node] = append(r.Config.RouteConfigs[node], &xds.RouteConfig{RouteConfiguration: rd, ListenerNames: listenerNames, Route: route})
-		r.Config.IncrementConfigCounter()
+// notifyListeners asks LDS to rebuild listeners whose filter chains depend on routes this reconcile changed.
+func (r *RouteReconciler) notifyListeners(ctx context.Context, namespace string, names []string) {
+	if r.ListenerEvents == nil || len(names) == 0 {
+		return
 	}
+	r.Config.ReconciliationStatus.SetListenersReconciled(false)
+	for _, name := range names {
+		key := types.NamespacedName{Namespace: namespace, Name: name}
+		r.Config.ReconciliationStatus.MarkListenerPending(key.String())
+		select {
+		case r.ListenerEvents <- event.GenericEvent{Object: &envoyxdsv1alpha1.Listener{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		}}:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
 
-	return updated
+func (r *RouteReconciler) enqueueRoute(ctx context.Context, key types.NamespacedName) {
+	if r.requeue == nil {
+		return
+	}
+	select {
+	case r.requeue <- event.GenericEvent{Object: &envoyxdsv1alpha1.Route{
+		ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+	}}:
+	case <-ctx.Done():
+	}
+}
+
+func (r *RouteReconciler) addLoser(winner, loser types.NamespacedName) {
+	r.losersMu.Lock()
+	defer r.losersMu.Unlock()
+	if r.losers == nil {
+		r.losers = make(map[types.NamespacedName]map[types.NamespacedName]struct{})
+	}
+	if r.losers[winner] == nil {
+		r.losers[winner] = make(map[types.NamespacedName]struct{})
+	}
+	r.losers[winner][loser] = struct{}{}
+}
+
+func (r *RouteReconciler) requeueLosers(ctx context.Context, winner types.NamespacedName) {
+	r.losersMu.Lock()
+	losers := r.losers[winner]
+	delete(r.losers, winner)
+	r.losersMu.Unlock()
+	for key := range losers {
+		r.enqueueRoute(ctx, key)
+	}
+}
+
+func mergeNames(a, b []string) []string {
+	out := make([]string, 0, len(a)+len(b))
+	out = append(out, a...)
+	out = append(out, b...)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func (r *RouteReconciler) isListenerExists(ctx context.Context, listenerNames, nodes []string, req ctrl.Request) (exists bool, unmatchedNodes []string) {
@@ -955,6 +949,9 @@ func routeStatusEqual(a, b envoyxdsv1alpha1.RouteStatus) bool {
 		return false
 	}
 	if a.ObservedGeneration != b.ObservedGeneration {
+		return false
+	}
+	if a.Message != b.Message {
 		return false
 	}
 	if len(a.Snapshots) != len(b.Snapshots) {

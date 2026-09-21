@@ -85,7 +85,19 @@ jobs:
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@latest
 
+      - name: Pull Envoy images for the filter chain parity test
+        run: |
+          for image in envoyproxy/envoy:v1.31-latest envoyproxy/envoy:v1.36-latest; do
+            for attempt in 1 2 3; do
+              docker pull -q "$image" && break
+              [[ $attempt -eq 3 ]] && exit 1
+              sleep $((attempt * 10))
+            done
+          done
+
       - name: Run tests with JUnit output
+        env:
+          ENVOY_PARITY_IMAGE: envoyproxy/envoy:v1.31-latest,envoyproxy/envoy:v1.36-latest
         run: |
           # Get list of packages excluding generated code directories
           PACKAGES=$(go list ./... | grep -v '/tools/typegen/' | tr '\n' ',')
@@ -632,8 +644,8 @@ jobs:
           echo ""
           echo "=== Test 8: HTTPS route (with self-signed cert) ==="
           HTTPS_CODE=$(curl -s -k -o /dev/null -w "%{http_code}" \
-            -H "Host: secure.e2e.local" \
-            "https://${NODE_IP}:${HTTPS_PORT}/" --max-time 15 2>/dev/null || echo "000")
+            --connect-to "secure.e2e.local:${HTTPS_PORT}:${NODE_IP}:${HTTPS_PORT}" \
+            "https://secure.e2e.local:${HTTPS_PORT}/" --max-time 15 2>/dev/null || true)
 
           if [[ "$HTTPS_CODE" == "200" ]]; then
             echo "✅ HTTPS route with TLS responded successfully (status: $HTTPS_CODE)"
@@ -686,6 +698,144 @@ jobs:
             kubectl logs -l app=envoy -n xds-system --tail=50 || true
             echo ""
             echo "=== Debug: xDS Controller logs ==="
+            kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
+            exit 1
+          fi
+
+      - name: Test filter chain selection and conflict rejection
+        run: |
+          NODE_IP="${{ steps.envoy.outputs.node_ip }}"
+          HTTPS_PORT="${{ steps.envoy.outputs.https_port }}"
+          ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}"
+          FAILURES=0
+          echo "TEST_FCM_SELECTION=❌ Failed" >> "$GITHUB_ENV"
+          echo "TEST_FCM_CONFLICT=❌ Failed" >> "$GITHUB_ENV"
+
+          # Prints the value of response header $1 for a curl request built from the remaining args.
+          header_of() {
+            local name=$1; shift
+            curl -sk -D - -o /dev/null --max-time 10 "$@" 2>/dev/null | tr -d '\r' \
+              | awk -v n="$name" -F': ' 'tolower($1)==n {print $2}' || true
+          }
+          lds_rejected() {
+            curl -s "http://${NODE_IP}:${ADMIN_PORT}/stats" | awk -F': ' '$1=="listener_manager.lds.update_rejected" {print $2}' || true
+          }
+
+          echo "=== No SNI, no ALPN (health probe) lands on the probe chain ==="
+          CHAIN=""
+          for _ in $(seq 1 6); do
+            CHAIN=$(header_of x-e2e-chain --http1.1 --no-alpn "https://${NODE_IP}:${HTTPS_PORT}/healthz")
+            [[ "$CHAIN" == "no-sni-probe" ]] && break
+            sleep 5
+          done
+          if [[ "$CHAIN" == "no-sni-probe" ]]; then
+            echo "✅ probe chain selected"
+          else
+            echo "❌ expected no-sni-probe, got '$CHAIN'"
+            FAILURES=$((FAILURES + 1))
+          fi
+
+          echo "=== No SNI, ALPN h2 lands on the ALPN chain ==="
+          CHAIN=$(header_of x-e2e-chain --http2 "https://${NODE_IP}:${HTTPS_PORT}/")
+          if [[ "$CHAIN" == "no-sni-alpn" ]]; then
+            echo "✅ ALPN chain selected"
+          else
+            echo "❌ expected no-sni-alpn, got '$CHAIN'"
+            FAILURES=$((FAILURES + 1))
+          fi
+
+          echo "=== SNI still wins over the no-SNI chains ==="
+          ROUTE=$(header_of x-e2e-test --connect-to "secure.e2e.local:${HTTPS_PORT}:${NODE_IP}:${HTTPS_PORT}" \
+            "https://secure.e2e.local:${HTTPS_PORT}/")
+          if [[ "$ROUTE" == "https-route" ]]; then
+            echo "✅ server_names chain selected"
+          else
+            echo "❌ expected https-route, got '$ROUTE'"
+            FAILURES=$((FAILURES + 1))
+          fi
+          [[ $FAILURES -eq 0 ]] && echo "TEST_FCM_SELECTION=✅ Passed" >> "$GITHUB_ENV"
+
+          echo "=== A duplicate route is rejected by the controller, not by Envoy ==="
+          REJECTED_BEFORE=$(lds_rejected)
+          if ! [[ "$REJECTED_BEFORE" =~ ^[0-9]+$ ]]; then
+            echo "❌ listener_manager.lds.update_rejected not readable from the Envoy admin API"
+            exit 1
+          fi
+          cat <<'ROUTEEOF' | kubectl apply -f -
+          apiVersion: envoyxds.io/v1alpha1
+          kind: Route
+          metadata:
+            name: no-sni-probe-dup
+            namespace: xds-system
+            annotations:
+              clusters: "e2e-test"
+              nodes: "e2e-test-node"
+          spec:
+            listener_refs:
+              - https-complex
+            tlssecret_ref: e2e-wildcard-cert
+            filter_chain_match:
+              source_prefix_ranges:
+                - address_prefix: 0.0.0.0
+                  prefix_len: 0
+            stat_prefix: no-sni-probe-dup
+            codec_type: AUTO
+            route_config:
+              name: no_sni_probe_dup
+              virtual_hosts:
+                - name: dup
+                  domains: ["*"]
+                  routes:
+                    - match: {prefix: /}
+                      direct_response: {status: 503}
+            http_filters:
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          ROUTEEOF
+
+          COND=""
+          for _ in $(seq 1 12); do
+            COND=$(kubectl get route no-sni-probe-dup -n xds-system -o jsonpath='{.status.conditions[?(@.type=="Error")].status}' 2>/dev/null || true)
+            [[ "$COND" == "True" ]] && break
+            sleep 5
+          done
+          MSG=$(kubectl get route no-sni-probe-dup -n xds-system -o jsonpath='{.status.message}' 2>/dev/null || true)
+          echo "status.message: $MSG"
+          CONFLICT_OK=true
+          if [[ "$COND" == "True" && "$MSG" == *"older route 'no-sni-probe-route'"* ]]; then
+            echo "✅ duplicate reported on the Route"
+          else
+            echo "❌ Error condition '$COND', message '$MSG'"
+            CONFLICT_OK=false
+          fi
+
+          # Longer than an LDS rebuild plus one snapshot tick, so a pushed duplicate would show up.
+          sleep 15
+          REJECTED_AFTER=$(lds_rejected)
+          if [[ "$REJECTED_AFTER" =~ ^[0-9]+$ && "$REJECTED_BEFORE" == "$REJECTED_AFTER" ]]; then
+            echo "✅ Envoy rejected no LDS update ($REJECTED_AFTER)"
+          else
+            echo "❌ listener_manager.lds.update_rejected went ${REJECTED_BEFORE} -> ${REJECTED_AFTER}"
+            CONFLICT_OK=false
+          fi
+
+          CHAIN=$(header_of x-e2e-chain --http1.1 --no-alpn "https://${NODE_IP}:${HTTPS_PORT}/healthz")
+          if [[ "$CHAIN" == "no-sni-probe" ]]; then
+            echo "✅ original probe chain still served"
+          else
+            echo "❌ probe now answered by '$CHAIN'"
+            CONFLICT_OK=false
+          fi
+          kubectl delete route no-sni-probe-dup -n xds-system --ignore-not-found
+
+          if [[ "$CONFLICT_OK" == "true" ]]; then
+            echo "TEST_FCM_CONFLICT=✅ Passed" >> "$GITHUB_ENV"
+          else
+            FAILURES=$((FAILURES + 1))
+          fi
+
+          if [[ $FAILURES -gt 0 ]]; then
             kubectl logs -l app=xds-controller -n xds-system --tail=50 || true
             exit 1
           fi
@@ -1643,6 +1793,8 @@ jobs:
           echo "| Lua Filter Headers | ${{ env.TEST_LUA || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Redirect Routes | ${{ env.TEST_REDIRECT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| HTTPS/TLS (port 8443) | ${{ env.TEST_HTTPS || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Filter chain selection (no SNI, ALPN vs probe) | ${{ env.TEST_FCM_SELECTION || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Duplicate filter chain rejected without NACK | ${{ env.TEST_FCM_CONFLICT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| TCP Proxy Complex (port 9000) | ${{ env.TEST_TCP_COMPLEX || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| TCP Proxy Basic (port 9001) | ${{ env.TEST_TCP_BASIC || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

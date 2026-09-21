@@ -83,8 +83,7 @@ metadata:
   namespace: xds-system
 spec:
   listener_refs:
-    - grpc
-    - grpc-web  # Also accessible via gRPC-Web
+    - grpc  # grpc-web-route owns the grpc-web listener; two unmatched chains there would be rejected by Envoy
   stat_prefix: grpc
   codec_type: AUTO
   route_config:

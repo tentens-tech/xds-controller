@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+
+	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 )
 
 // NodeInfo contains node and cluster information parsed from annotations.
@@ -118,4 +120,36 @@ func ParseCSV(s string) []string {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 	return parts
+}
+
+// NodeIDs returns one node ID per cluster/node pair named in the "nodes" and
+// "clusters" annotations, falling back to the defaults when either is empty.
+func NodeIDs(annotations map[string]string, defaultNode, defaultCluster string) []string {
+	nodes, clusters := annotations["nodes"], annotations["clusters"]
+	if nodes == "" {
+		nodes = defaultNode
+	}
+	if clusters == "" {
+		clusters = defaultCluster
+	}
+	nodesList := ParseCSV(nodes)
+	clustersList := ParseCSV(clusters)
+	sort.Strings(nodesList)
+	sort.Strings(clustersList)
+
+	ids := make([]string, 0, len(nodesList)*len(clustersList))
+	for _, cluster := range clustersList {
+		for _, node := range nodesList {
+			ids = append(ids, GetNodeID(map[string]string{"clusters": cluster, "nodes": node}))
+		}
+	}
+	return ids
+}
+
+// OlderRoute reports whether a takes precedence over b: earlier creation first, then name.
+func OlderRoute(a, b *envoyxdsv1alpha1.Route) bool {
+	if !a.CreationTimestamp.Equal(&b.CreationTimestamp) {
+		return a.CreationTimestamp.Before(&b.CreationTimestamp)
+	}
+	return a.Name < b.Name
 }
