@@ -650,7 +650,7 @@ jobs:
           if [[ "$HTTPS_CODE" == "200" ]]; then
             echo "✅ HTTPS route with TLS responded successfully (status: $HTTPS_CODE)"
             echo "TEST_HTTPS=✅ Passed" >> "$GITHUB_ENV"
-          elif [[ "$HTTPS_CODE" != "000" ]]; then
+          elif [[ -n "$HTTPS_CODE" && "$HTTPS_CODE" != "000" ]]; then
             echo "✅ HTTPS/TLS connection established (status: $HTTPS_CODE)"
             echo "TEST_HTTPS=✅ Passed" >> "$GITHUB_ENV"
           else

@@ -16,6 +16,7 @@ package lds
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -31,6 +32,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
 	"github.com/tentens-tech/xds-controller/controllers/util"
@@ -238,4 +240,23 @@ func TestReconcile_KeepsRouteConfigsWhenListenerDeleted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, r.Config.ListenerConfigs[node])
 	assert.Len(t, r.Config.RouteConfigs[node], 1, "route placement belongs to RDS")
+}
+
+func TestReconcile_FailedGetKeepsListenerPending(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, envoyxdsv1alpha1.AddToScheme(scheme))
+	r := testListenerReconciler()
+	r.Scheme = scheme
+	r.Client = fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return errors.New("apiserver unavailable")
+		},
+	}).Build()
+	rs := r.Config.ReconciliationStatus
+	rs.SetRoutesInitialized(true)
+	rs.MarkListenerPending("xds-system/https")
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "xds-system", Name: "https"}})
+	require.Error(t, err)
+	assert.True(t, rs.HasPendingListeners(), "a listener that was not rebuilt must stay pending")
 }

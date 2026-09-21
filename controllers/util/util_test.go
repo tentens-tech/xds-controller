@@ -52,3 +52,27 @@ func TestOlderRoute(t *testing.T) {
 	assert.False(t, OlderRoute(route("b", t0), route("a", t0)))
 	assert.False(t, OlderRoute(route("a", t0), route("a", t0)))
 }
+
+func TestNodeIDsIgnoreEmptyEntries(t *testing.T) {
+	pairs := func(ids []string) []string {
+		out := make([]string, 0, len(ids))
+		for _, id := range ids {
+			info, err := GetNodeInfo(id)
+			require.NoError(t, err)
+			require.Len(t, info.Nodes, 1)
+			require.Len(t, info.Clusters, 1)
+			out = append(out, info.Clusters[0]+"/"+info.Nodes[0])
+		}
+		return out
+	}
+	assert.Equal(t, []string{"apps/01"}, pairs(NodeIDs(map[string]string{"clusters": "apps,", "nodes": "01,"}, "dflt", "dflt")))
+	assert.Equal(t, []string{"apps/01", "apps/02"}, pairs(NodeIDs(map[string]string{"clusters": " apps ", "nodes": "01, 02"}, "dflt", "dflt")))
+	assert.Equal(t, []string{"dflt/dflt"}, pairs(NodeIDs(map[string]string{"clusters": ",", "nodes": " , "}, "dflt", "dflt")))
+}
+
+func TestGetNodeIDTrimsEntries(t *testing.T) {
+	assert.Equal(t,
+		GetNodeID(map[string]string{"clusters": "apps", "nodes": "01,02"}),
+		GetNodeID(map[string]string{"clusters": "apps, ", "nodes": " 02,01,"}))
+	assert.Equal(t, []string{}, ParseCSV(" , ,"))
+}

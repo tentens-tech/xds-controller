@@ -14,7 +14,8 @@
 
 // Command route-audit replays how the controller places Routes and lists the ones it would reject.
 //
-//	kubectl get routes.envoyxds.io,listeners.envoyxds.io -n xds-system -o yaml | route-audit -nodeID global -cluster global
+//	kubectl get routes.envoyxds.io,listeners.envoyxds.io -n xds-system -o yaml > live.yaml
+//	route-audit -nodeID global -cluster global live.yaml new-route.yaml
 package main
 
 import (
@@ -40,23 +41,22 @@ func main() {
 }
 
 func run() int {
-	file := flag.String("f", "-", "Route manifests: multi-document YAML or a List, '-' for stdin")
+	file := flag.String("f", "", "Route and Listener manifests; more files can follow as arguments, stdin when none is given")
 	nodeID := flag.String("nodeID", "global", "controller --nodeID, used when a route has no nodes annotation")
 	cluster := flag.String("cluster", "global", "controller --cluster, used when a route has no clusters annotation")
 	flag.Parse()
 
-	in := io.Reader(os.Stdin)
-	if *file != "-" {
-		f, err := os.Open(*file)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 2
-		}
-		defer f.Close() //nolint:errcheck // read-only file
-		in = f
+	files := flag.Args()
+	if *file != "" {
+		files = append([]string{*file}, files...)
+	}
+	in, err := readInputs(files)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
 	}
 
-	report, problems, err := audit(in, *nodeID, *cluster)
+	report, problems, err := audit(bytes.NewReader(in), *nodeID, *cluster)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -68,6 +68,29 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+// readInputs joins the files as separate YAML documents; "-" or no files reads stdin.
+func readInputs(files []string) ([]byte, error) {
+	if len(files) == 0 {
+		files = []string{"-"}
+	}
+	var out bytes.Buffer
+	for _, f := range files {
+		var data []byte
+		var err error
+		if f == "-" {
+			data, err = io.ReadAll(os.Stdin)
+		} else {
+			data, err = os.ReadFile(f) //nolint:gosec // files the user asked to audit
+		}
+		if err != nil {
+			return nil, err
+		}
+		out.WriteString("\n---\n")
+		out.Write(data)
+	}
+	return out.Bytes(), nil
 }
 
 type placed struct {

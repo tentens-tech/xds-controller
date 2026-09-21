@@ -534,7 +534,7 @@ List the Routes the controller would reject, including manifests you haven't app
 
 ```sh
 kubectl get routes.envoyxds.io,listeners.envoyxds.io -n xds-system -o yaml > live.yaml
-cat live.yaml new-route.yaml | go run ./cmd/route-audit -nodeID global -cluster global
+go run ./cmd/route-audit -nodeID global -cluster global live.yaml new-route.yaml
 ```
 
 ### Build

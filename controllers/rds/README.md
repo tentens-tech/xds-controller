@@ -480,7 +480,7 @@ Requests with SNI still go to their `server_names` chains, because Envoy checks 
 
 ```sh
 kubectl get routes.envoyxds.io,listeners.envoyxds.io -n xds-system -o yaml > live.yaml
-cat live.yaml new-route.yaml | go run ./cmd/route-audit -nodeID global -cluster global
+go run ./cmd/route-audit -nodeID global -cluster global live.yaml new-route.yaml
 ```
 
 ```text
@@ -492,7 +492,7 @@ CONFLICT lb-health-probe evicts lb-health-probe-copy (duplicate) on production/0
 - Pass the controller's `--nodeID` and `--cluster` values, so Routes without annotations are placed the same way.
 - Manifests without `metadata.creationTimestamp` count as newer than every Route already in the cluster.
 - Include the Listeners, so Routes are placed only where their listeners exist and are checked against the Listeners' own `filter_chains`. Without Listeners, every listener is assumed to exist everywhere.
-- It exits with status 1 when it reports a problem, and reads only `envoyxds.io` objects.
+- Pass any number of files, each a `kubectl` List or multi-document YAML; with no files it reads stdin. It exits with status 1 when it reports a problem, and reads only `envoyxds.io` objects.
 
 ## Configuration Parameters
 

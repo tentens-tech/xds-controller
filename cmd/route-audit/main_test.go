@@ -159,3 +159,32 @@ func TestAuditMultiDocument(t *testing.T) {
 	assert.Zero(t, problems, report)
 	assert.Equal(t, []string{"2 routes, 0 problems"}, report)
 }
+
+func TestReadInputsKeepsFilesApart(t *testing.T) {
+	dir := t.TempDir()
+	live := dir + "/live.yaml"
+	fresh := dir + "/new.yaml"
+	require.NoError(t, os.WriteFile(live, []byte(`apiVersion: v1
+kind: List
+items:
+- apiVersion: envoyxds.io/v1alpha1
+  kind: Route
+  metadata: {name: live-probe, creationTimestamp: "2025-01-01T00:00:00Z"}
+  spec: {listener_refs: [https], filter_chain_match: {source_prefix_ranges: [{address_prefix: 10.0.0.0, prefix_len: 8}]}}
+`), 0o600))
+	require.NoError(t, os.WriteFile(fresh, []byte(`apiVersion: envoyxds.io/v1alpha1
+kind: Route
+metadata: {name: new-probe}
+spec: {listener_refs: [https], filter_chain_match: {source_prefix_ranges: [{address_prefix: 10.0.0.0, prefix_len: 8}]}}
+`), 0o600))
+
+	in, err := readInputs([]string{live, fresh})
+	require.NoError(t, err)
+	report, problems, err := audit(bytes.NewReader(in), "global", "global")
+	require.NoError(t, err)
+	assert.Equal(t, 1, problems)
+	assert.Equal(t, []string{
+		"CONFLICT live-probe evicts new-probe (duplicate) on global/global",
+		"2 routes, 1 problems",
+	}, report)
+}

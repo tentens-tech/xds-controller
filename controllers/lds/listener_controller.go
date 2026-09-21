@@ -141,7 +141,7 @@ var ErrorDuplicateFound = errors.New("duplicate found")
 //+kubebuilder:rbac:groups=envoyxds.io,resources=routes/status,verbs=get;update;patch
 
 // Reconcile reconciles the Listener resource.
-func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reconcileErr error) {
 	log := ctrllog.FromContext(ctx)
 
 	r.Config.ReconciliationStatus.SetHasListeners(true)
@@ -151,8 +151,14 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if !rs.IsRoutesInitialized() || !rs.IsRoutesReconciled() || !rs.IsDomainConfigsReconciled() {
 		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
 	}
+	// A failed reconcile is retried, so the listener stays pending until a rebuild succeeds.
 	pendingKey := req.String()
-	defer rs.ClearListenerPending(pendingKey, rs.ListenerPendingSeq(pendingKey))
+	pendingSeq := rs.ListenerPendingSeq(pendingKey)
+	defer func() {
+		if reconcileErr == nil {
+			rs.ClearListenerPending(pendingKey, pendingSeq)
+		}
+	}()
 
 	// Log only once when LDS actually starts reconciling (dependencies ready)
 	if !r.initialStartLogged.Swap(true) {
