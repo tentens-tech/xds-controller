@@ -1764,6 +1764,15 @@ jobs:
 
           echo "SDS_FRESHNESS_RESULT=✅ Passed" >> "$GITHUB_ENV"
 
+      - name: Test route lifecycle and controller restart
+        run: |
+          echo "ROUTE_LIFECYCLE_RESULT=❌ Failed" >> "$GITHUB_ENV"
+          NODE_IP="${{ steps.envoy.outputs.node_ip }}" \
+          ADMIN_PORT="${{ steps.envoy.outputs.admin_port }}" \
+          HTTPS_PORT="${{ steps.envoy.outputs.https_port }}" \
+            bash test/e2e/lifecycle.sh
+          echo "ROUTE_LIFECYCLE_RESULT=✅ Passed" >> "$GITHUB_ENV"
+
       - name: Generate E2E summary
         if: always()
         run: |
@@ -1820,6 +1829,11 @@ jobs:
           echo "| pause annotation suspends reconcile | ${{ env.SDS_PAUSE_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Failure backoff escalates (20s -> 40s) | ${{ env.SDS_BACKOFF_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Status stays fresh (lastReconciled) | ${{ env.SDS_FRESHNESS_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Route Lifecycle Tests" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Edits, no-op changes, conflict promotion, invalid matcher, QUIC codec, restart | ${{ env.ROUTE_LIFECYCLE_RESULT || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Debug on failure
         if: failure()
