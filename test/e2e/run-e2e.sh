@@ -977,6 +977,11 @@ BACKOFFEOF
         test_failures=$((test_failures + 1))
     fi
 
+    # Step 22: Route lifecycle (runs last: it restarts the controller)
+    log_info "Step 22: Testing route lifecycle, no-op changes and controller restart..."
+    NODE_IP="$node_ip" ADMIN_PORT="$envoy_admin_port" HTTPS_PORT="$envoy_https_port" NAMESPACE="$NAMESPACE" \
+        bash test/e2e/lifecycle.sh || test_failures=$((test_failures + 1))
+
     # Summary
     log_info "=== E2E Test Summary ==="
     if [[ $test_failures -eq 0 ]]; then

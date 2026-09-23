@@ -18,12 +18,8 @@ package xds
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,7 +33,6 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	vault "github.com/hashicorp/vault/api"
-	"google.golang.org/protobuf/encoding/protojson"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	envoyxdsv1alpha1 "github.com/tentens-tech/xds-controller/apis/v1alpha1"
@@ -63,36 +58,76 @@ func GenerateSnapshotsV2(ctx context.Context, x *Config) ([]SnapshotConfig, erro
 	// Pre-allocate snapshot slice
 	sc := make([]SnapshotConfig, 0, len(resources))
 
-	// Generate snapshots
+	memo := &x.snapshotMemo
+	memo.mu.Lock()
+	defer memo.mu.Unlock()
+	defer memo.endPass()
 	for nodeID, nodeResources := range resources {
-		pruneUnreferencedRoutes(nodeResources)
-		version := GetHash(nodeResources)
+		used := routeReferences(nodeResources[resource.ListenerType], &memo.routes)
+		pruneUnreferencedRoutes(nodeResources, used)
+		version := memo.hashes.resources(nodeResources)
 		snap, err := cache.NewSnapshot(version, nodeResources)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create snapshot for node %s: %w", nodeID, err)
 		}
 		sc = append(sc, SnapshotConfig{
-			NodeID:   nodeID,
-			Version:  version,
-			Snapshot: snap,
+			NodeID:       nodeID,
+			Version:      version,
+			Snapshot:     snap,
+			Inconsistent: consistent(snap, used),
 		})
 	}
 
 	return sc, nil
 }
 
+// routeReferences returns the route names the listeners' HTTP connection managers use,
+// decoding each HTTP connection manager once across passes.
+func routeReferences(listeners []types.Resource, memo *passMemo[[]string]) map[string]bool {
+	used := make(map[string]bool)
+	add := func(fc *listener.FilterChain) {
+		for _, f := range fc.GetFilters() {
+			tc := f.GetTypedConfig()
+			if tc == nil {
+				continue
+			}
+			for _, name := range memo.get(tc, func() []string {
+				hcm := resource.GetHTTPConnectionManager(f)
+				if hcm == nil {
+					return nil
+				}
+				var names []string
+				if name := hcm.GetRds().GetRouteConfigName(); name != "" {
+					names = append(names, name)
+				}
+				for _, sr := range hcm.GetScopedRoutes().GetScopedRouteConfigurationsList().GetScopedRouteConfigurations() {
+					names = append(names, sr.GetRouteConfigurationName())
+				}
+				return names
+			}) {
+				used[name] = true
+			}
+		}
+	}
+	for _, r := range listeners {
+		l, ok := r.(*listener.Listener)
+		if !ok {
+			continue
+		}
+		for _, fc := range l.GetFilterChains() {
+			add(fc)
+		}
+		if fc := l.GetDefaultFilterChain(); fc != nil {
+			add(fc)
+		}
+	}
+	return used
+}
+
 // pruneUnreferencedRoutes drops route configurations no listener on the node uses,
 // e.g. a route whose filter chain LDS skipped; the snapshot would be inconsistent otherwise.
-func pruneUnreferencedRoutes(res map[string][]types.Resource) {
+func pruneUnreferencedRoutes(res map[string][]types.Resource, used map[string]bool) {
 	routes := res[resource.RouteType]
-	if len(routes) == 0 {
-		return
-	}
-	listeners := make(map[string]types.ResourceWithTTL, len(res[resource.ListenerType]))
-	for _, l := range res[resource.ListenerType] {
-		listeners[cache.GetResourceName(l)] = types.ResourceWithTTL{Resource: l}
-	}
-	used := cache.GetResourceReferences(listeners)[resource.RouteType]
 	kept := routes[:0]
 	for _, r := range routes {
 		if used[cache.GetResourceName(r)] {
@@ -102,10 +137,35 @@ func pruneUnreferencedRoutes(res map[string][]types.Resource) {
 	res[resource.RouteType] = kept
 }
 
+// consistent is Snapshot.Consistent with the route references already known.
+func consistent(snap *cache.Snapshot, routes map[string]bool) error {
+	clusters := make(map[string]types.ResourceWithTTL)
+	for name, c := range snap.GetResources(resource.ClusterType) {
+		clusters[name] = types.ResourceWithTTL{Resource: c}
+	}
+	refs := map[string]map[string]bool{
+		resource.EndpointType: cache.GetResourceReferences(clusters)[resource.EndpointType],
+		resource.RouteType:    routes,
+	}
+	for _, typ := range []string{resource.EndpointType, resource.RouteType} {
+		items := snap.GetResources(typ)
+		if len(refs[typ]) != len(items) {
+			return fmt.Errorf("mismatched %q reference and resource lengths: len(%v) != %d", typ, refs[typ], len(items))
+		}
+		for name := range items {
+			if !refs[typ][name] {
+				return fmt.Errorf("inconsistent %q reference: %q not listed", typ, name)
+			}
+		}
+	}
+	return nil
+}
+
 func getResourcesFromSecretConfigs(x *Config, resources map[string]map[string][]types.Resource) map[string]map[string][]types.Resource {
 	for s, v := range x.SecretConfigs {
+		targets := targetNodes(s, x)
 		for i := range v {
-			updateResources(s, v[i], resource.SecretType, x, resources)
+			addResource(targets, v[i], resource.SecretType, resources)
 		}
 	}
 	return resources
@@ -113,8 +173,9 @@ func getResourcesFromSecretConfigs(x *Config, resources map[string]map[string][]
 
 func getResourcesFromListenerConfigs(x *Config, resources map[string]map[string][]types.Resource) map[string]map[string][]types.Resource {
 	for s, v := range x.ListenerConfigs {
+		targets := targetNodes(s, x)
 		for i := range v {
-			updateResources(s, v[i], resource.ListenerType, x, resources)
+			addResource(targets, v[i], resource.ListenerType, resources)
 		}
 	}
 	return resources
@@ -122,8 +183,9 @@ func getResourcesFromListenerConfigs(x *Config, resources map[string]map[string]
 
 func getResourcesFromClusterConfigs(x *Config, resources map[string]map[string][]types.Resource) map[string]map[string][]types.Resource {
 	for s, v := range x.ClusterConfigs {
+		targets := targetNodes(s, x)
 		for i := range v {
-			updateResources(s, v[i], resource.ClusterType, x, resources)
+			addResource(targets, v[i], resource.ClusterType, resources)
 		}
 	}
 	return resources
@@ -131,8 +193,9 @@ func getResourcesFromClusterConfigs(x *Config, resources map[string]map[string][
 
 func getResourcesFromRouteConfigs(x *Config, resources map[string]map[string][]types.Resource) map[string]map[string][]types.Resource {
 	for s, v := range x.RouteConfigs {
+		targets := targetNodes(s, x)
 		for i := range v {
-			updateResources(s, v[i].RouteConfiguration, resource.RouteType, x, resources)
+			addResource(targets, v[i].RouteConfiguration, resource.RouteType, resources)
 		}
 	}
 	return resources
@@ -157,36 +220,40 @@ func getResourcesFromEndpointConfigs(x *Config, resources map[string]map[string]
 
 	// Only add endpoints that are referenced by EDS-type clusters
 	for s, v := range x.EndpointConfigs {
+		targets := targetNodes(s, x)
 		for i := range v {
 			if _, referenced := edsEndpointNames[v[i].ClusterName]; referenced {
-				updateResources(s, v[i], resource.EndpointType, x, resources)
+				addResource(targets, v[i], resource.EndpointType, resources)
 			}
 		}
 	}
 	return resources
 }
 
-func updateResources(s string, res types.Resource, resType string, x *Config, resources map[string]map[string][]types.Resource) {
+// targetNodes expands a config map key into the node IDs whose snapshots get its resources.
+func targetNodes(s string, x *Config) []string {
 	nodeInfo, err := util.GetNodeInfo(s)
 	if err != nil {
-		return
+		return nil
 	}
-	updateFunc := func(nodeID string) {
+	if len(nodeInfo.Clusters) == 0 && len(nodeInfo.Nodes) == 0 {
+		return []string{util.GetNodeID(map[string]string{"nodes": x.NodeID, "clusters": x.Cluster})}
+	}
+	var out []string
+	for _, c := range nodeInfo.Clusters {
+		for _, n := range getNodes(nodeInfo, x) {
+			out = append(out, util.GetNodeID(map[string]string{"nodes": n, "clusters": c}))
+		}
+	}
+	return out
+}
+
+func addResource(targets []string, res types.Resource, resType string, resources map[string]map[string][]types.Resource) {
+	for _, nodeID := range targets {
 		if resources[nodeID] == nil {
 			resources[nodeID] = make(map[string][]types.Resource)
 		}
 		resources[nodeID][resType] = append(resources[nodeID][resType], res)
-	}
-
-	if len(nodeInfo.Clusters) == 0 && len(nodeInfo.Nodes) == 0 {
-		updateFunc(util.GetNodeID(map[string]string{"nodes": x.NodeID, "clusters": x.Cluster}))
-		return
-	}
-
-	for _, c := range nodeInfo.Clusters {
-		for _, n := range getNodes(nodeInfo, x) {
-			updateFunc(util.GetNodeID(map[string]string{"nodes": n, "clusters": c}))
-		}
 	}
 }
 
@@ -195,125 +262,6 @@ func getNodes(nodeInfo util.NodeInfo, x *Config) []string {
 		return []string{x.NodeID}
 	}
 	return nodeInfo.Nodes
-}
-
-// sortMapRecursively sorts all arrays and map keys recursively in the structure
-func sortMapRecursively(data interface{}) interface{} {
-	switch v := data.(type) {
-	case map[string]interface{}:
-		// Sort map keys
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		sorted := make(map[string]interface{}, len(v))
-		for _, k := range keys {
-			sorted[k] = sortMapRecursively(v[k])
-		}
-		return sorted
-
-	case []interface{}:
-		if len(v) == 0 {
-			return v
-		}
-
-		// Sort slice elements
-		sorted := make([]interface{}, len(v))
-		for i, val := range v {
-			sorted[i] = sortMapRecursively(val)
-		}
-
-		// Convert to comparable strings for stable sorting
-		strVals := make([]string, len(sorted))
-		for i, val := range sorted {
-			b, err := json.Marshal(val)
-			if err != nil {
-				panic(err)
-			}
-			strVals[i] = string(b)
-		}
-
-		// Create index mapping for stable sort
-		indices := make([]int, len(strVals))
-		for i := range indices {
-			indices[i] = i
-		}
-
-		// Sort indices based on string values
-		sort.SliceStable(indices, func(i, j int) bool {
-			return strVals[indices[i]] < strVals[indices[j]]
-		})
-
-		// Reorder elements based on sorted indices
-		result := make([]interface{}, len(sorted))
-		for newIndex, oldIndex := range indices {
-			result[newIndex] = sorted[oldIndex]
-		}
-		return result
-
-	default:
-		return v
-	}
-}
-
-func GetHash(resources map[string][]types.Resource) string {
-	// Create single marshaler instance
-	marshaler := protojson.MarshalOptions{
-		UseProtoNames:  true,
-		UseEnumNumbers: true,
-		AllowPartial:   true,
-	}
-
-	// Convert and sort resources
-	resourcesMap := make(map[string][]interface{})
-	keys := make([]string, 0, len(resources))
-	for k := range resources {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		resourcesSlice := resources[key]
-		jsonResources := make([]interface{}, 0, len(resourcesSlice))
-
-		for _, resource := range resourcesSlice {
-			// Marshal to JSON bytes
-			jsonBytes, err := marshaler.Marshal(resource)
-			if err != nil {
-				panic(err)
-			}
-
-			// Unmarshal to map for sorting
-			var jsonMap map[string]interface{}
-			if err := json.Unmarshal(jsonBytes, &jsonMap); err != nil {
-				panic(err)
-			}
-
-			jsonResources = append(jsonResources, jsonMap)
-		}
-
-		// Sort the resources
-		sortedResources, ok := sortMapRecursively(jsonResources).([]interface{})
-		if !ok {
-			panic(fmt.Sprintf("unexpected type from sortMapRecursively: %T", sortMapRecursively(jsonResources)))
-		}
-		resourcesMap[key] = sortedResources
-	}
-
-	// Sort the entire structure
-	finalMap := sortMapRecursively(resourcesMap)
-
-	// Generate final JSON
-	jsonBytes, err := json.Marshal(finalMap)
-	if err != nil {
-		panic(err)
-	}
-
-	// Calculate hash
-	hash := sha256.Sum256(jsonBytes)
-	return hex.EncodeToString(hash[:])
 }
 
 type RouteConfig struct {
@@ -401,6 +349,8 @@ type Config struct {
 
 	// Counter for configuration changes
 	configChangeCounter atomic.Uint64
+
+	snapshotMemo snapshotMemo
 }
 
 // LockConfig acquires write lock on config maps - use when modifying configs
@@ -461,4 +411,6 @@ type SnapshotConfig struct {
 	NodeID   string
 	Version  string
 	Snapshot *cache.Snapshot
+	// Inconsistent is the Snapshot.Consistent result.
+	Inconsistent error
 }

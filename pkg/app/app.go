@@ -181,12 +181,13 @@ func createManager(opts *Options) (ctrl.Manager, error) {
 		HealthProbeBindAddress: opts.ProbeAddr,
 	}
 
+	// The controller never reads managedFields; on large Route specs they take as much memory as the spec.
+	mgrOpts.Cache.DefaultTransform = ctrlcache.TransformStripManagedFields()
+
 	// Configure namespace-scoped cache if namespace is specified
 	if opts.Namespace != "" {
-		mgrOpts.Cache = ctrlcache.Options{
-			DefaultNamespaces: map[string]ctrlcache.Config{
-				opts.Namespace: {},
-			},
+		mgrOpts.Cache.DefaultNamespaces = map[string]ctrlcache.Config{
+			opts.Namespace: {},
 		}
 	}
 

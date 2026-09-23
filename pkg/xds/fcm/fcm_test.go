@@ -235,3 +235,15 @@ func BenchmarkCompare(b *testing.B) {
 		}
 	})
 }
+
+func TestSetMatchesPairwiseCompare(t *testing.T) {
+	for _, tc := range append(slices.Clone(matchCases), ambiguousCases...) {
+		a, err := Compile(tc.a)
+		require.NoError(t, err)
+		b, err := Compile(tc.b)
+		require.NoError(t, err)
+		var s Set
+		s.Add(a)
+		assert.Equal(t, b.Compare(a) == Duplicate, s.HasDuplicate(b), tc.name)
+	}
+}
