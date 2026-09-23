@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	"github.com/stretchr/testify/assert"
@@ -38,6 +40,7 @@ import (
 	"github.com/tentens-tech/xds-controller/controllers/util"
 	"github.com/tentens-tech/xds-controller/pkg/status"
 	"github.com/tentens-tech/xds-controller/pkg/xds"
+	hcmtypes "github.com/tentens-tech/xds-controller/pkg/xds/types/hcm"
 	"github.com/tentens-tech/xds-controller/pkg/xds/types/lds"
 	routetypes "github.com/tentens-tech/xds-controller/pkg/xds/types/route"
 )
@@ -87,7 +90,7 @@ func TestProcessRoutes_SkipsChainsEnvoyWouldReject(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l, err := processRoutes(tt.routes, &listener.Listener{FilterChains: tt.static}, "node")
+			l, err := processRoutes(tt.routes, &listener.Listener{FilterChains: tt.static}, "node", nil)
 			require.NoError(t, err)
 			assert.Len(t, l.FilterChains, tt.want)
 		})
@@ -99,7 +102,7 @@ func TestProcessRoutes_InvalidStaticChain(t *testing.T) {
 		Name:             "bad",
 		FilterChainMatch: &listener.FilterChainMatch{SourcePrefixRanges: []*corev3.CidrRange{{AddressPrefix: "not-an-ip"}}},
 	}}
-	_, err := processRoutes(nil, &listener.Listener{FilterChains: static}, "node")
+	_, err := processRoutes(nil, &listener.Listener{FilterChains: static}, "node", nil)
 	require.ErrorContains(t, err, `filter chain "bad"`)
 }
 
@@ -171,7 +174,7 @@ func BenchmarkProcessRoutes(b *testing.B) {
 		b.Run(fmt.Sprintf("routes=%d", n), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := processRoutes(routes, &listener.Listener{}, "node"); err != nil {
+				if _, err := processRoutes(routes, &listener.Listener{}, "node", nil); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -181,14 +184,14 @@ func BenchmarkProcessRoutes(b *testing.B) {
 
 func TestProcessRoutes_DuplicateStaticChains(t *testing.T) {
 	static := []*listener.FilterChain{{Name: "a"}, {Name: "b"}}
-	_, err := processRoutes(nil, &listener.Listener{FilterChains: static}, "node")
+	_, err := processRoutes(nil, &listener.Listener{FilterChains: static}, "node", nil)
 	require.ErrorContains(t, err, `filter chain "b"`)
 }
 
 func TestProcessRoutes_BadRouteDoesNotBlockListener(t *testing.T) {
 	bad := chainRoute("bad", t0, &lds.FilterChainMatch{SourceType: "external"})
 	good := chainRoute("good", t0, &lds.FilterChainMatch{ServerNames: []string{"shop.example.com"}})
-	l, err := processRoutes([]*envoyxdsv1alpha1.Route{bad, good}, &listener.Listener{Name: "https"}, "node")
+	l, err := processRoutes([]*envoyxdsv1alpha1.Route{bad, good}, &listener.Listener{Name: "https"}, "node", nil)
 	require.NoError(t, err)
 	assert.Len(t, l.FilterChains, 1)
 }
@@ -259,4 +262,42 @@ func TestReconcile_FailedGetKeepsListenerPending(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "xds-system", Name: "https"}})
 	require.Error(t, err)
 	assert.True(t, rs.HasPendingListeners(), "a listener that was not rebuilt must stay pending")
+}
+
+func TestChainCache_ReusesChainsPerRouteVersion(t *testing.T) {
+	var c chainCache
+	shop := chainRoute("shop", t0, &lds.FilterChainMatch{ServerNames: []string{"shop.example.com"}})
+	build := func(routes ...*envoyxdsv1alpha1.Route) *listener.Listener {
+		l, err := processRoutes(routes, &listener.Listener{Name: "https"}, "node", &c)
+		require.NoError(t, err)
+		return l
+	}
+
+	first := build(shop)
+	assert.Same(t, first.FilterChains[0], build(shop).FilterChains[0], "an unchanged route reuses its chain")
+
+	edited := shop.DeepCopy()
+	edited.Spec.FilterChainMatch.ServerNames = []string{"store.example.com"}
+	rebuilt := build(edited)
+	assert.NotSame(t, first.FilterChains[0], rebuilt.FilterChains[0], "a new route version builds a new chain")
+	assert.Equal(t, []string{"store.example.com"}, rebuilt.FilterChains[0].GetFilterChainMatch().GetServerNames())
+
+	c.prune(map[*envoyxdsv1alpha1.Route]struct{}{edited: {}})
+	assert.Len(t, c.entries, 1, "chains of replaced routes are dropped")
+}
+
+func TestPrepareFilters_LeavesRouteUntouched(t *testing.T) {
+	r := chainRoute("shop", t0, nil)
+	r.Spec.Rds = &hcmtypes.Rds{}
+	before := r.DeepCopy()
+
+	filters, err := prepareFilters(r, true)
+	require.NoError(t, err)
+	assert.Equal(t, before, r)
+
+	h := &hcm.HttpConnectionManager{}
+	require.NoError(t, filters[0].GetTypedConfig().UnmarshalTo(h))
+	assert.Equal(t, "shop", h.GetRds().GetRouteConfigName())
+	assert.NotNil(t, h.GetRds().GetConfigSource().GetAds())
+	assert.Equal(t, hcm.HttpConnectionManager_HTTP3, h.GetCodecType())
 }

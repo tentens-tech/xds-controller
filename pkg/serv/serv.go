@@ -205,7 +205,7 @@ func processSnapshot(ctx context.Context, s *ServerConfig) error {
 		}
 
 		// An inconsistent snapshot keeps the node on its last good one; clearing it would drop Envoy's watches.
-		if err := conf.Snapshot.Consistent(); err != nil {
+		if err := conf.Inconsistent; err != nil {
 			logger.Error(err, "Snapshot inconsistency detected, keeping the previous snapshot",
 				"version", conf.Version,
 				"cluster", nodeInfo.Clusters[0],

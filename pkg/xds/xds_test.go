@@ -48,12 +48,12 @@ func TestPruneUnreferencedRoutes(t *testing.T) {
 		resource.ListenerType: {rdsListener(t, "https", "used")},
 		resource.RouteType:    {&routev3.RouteConfiguration{Name: "used"}, &routev3.RouteConfiguration{Name: "skipped-by-lds"}},
 	}
-	pruneUnreferencedRoutes(res)
+	pruneUnreferencedRoutes(res, routeReferences(res[resource.ListenerType], nil))
 
 	require.Len(t, res[resource.RouteType], 1)
 	assert.Equal(t, "used", cache.GetResourceName(res[resource.RouteType][0]))
 
 	noListeners := map[string][]types.Resource{resource.RouteType: {&routev3.RouteConfiguration{Name: "orphan"}}}
-	pruneUnreferencedRoutes(noListeners)
+	pruneUnreferencedRoutes(noListeners, routeReferences(nil, nil))
 	assert.Empty(t, noListeners[resource.RouteType])
 }

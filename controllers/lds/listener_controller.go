@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -130,6 +131,7 @@ type ListenerReconciler struct {
 	lastReconcileTime      atomic.Int64
 	initialStartLogged     atomic.Bool
 	initialReconcileLogged atomic.Bool
+	chains                 chainCache
 }
 
 // ErrorDuplicateFound is returned when a route's filter chain would duplicate one already on the listener.
@@ -202,6 +204,8 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_
 		}
 	}
 
+	defer r.pruneChains()
+
 	// Build the set of previous nodes where the listener exists
 	previousNodeSet := make(map[string]struct{})
 	r.Config.RLockConfig()
@@ -266,7 +270,7 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_
 		}
 
 		// Recast the Listener
-		lds, err := ListenerRecast(listenerCR, nodeRoutes, node)
+		lds, err := listenerRecast(listenerCR, nodeRoutes, node, &r.chains)
 		if err != nil {
 			log.Error(err, "unable to recast Listener")
 			statusErr = err
@@ -438,6 +442,18 @@ func (r *ListenerReconciler) hasRoutesFor(listener string, nodes []string) bool 
 		}
 	}
 	return false
+}
+
+func (r *ListenerReconciler) pruneChains() {
+	live := make(map[*envoyxdsv1alpha1.Route]struct{})
+	r.Config.RLockConfig()
+	for _, routes := range r.Config.RouteConfigs {
+		for _, rc := range routes {
+			live[rc.Route] = struct{}{}
+		}
+	}
+	r.Config.RUnlockConfig()
+	r.chains.prune(live)
 }
 
 func (r *ListenerReconciler) updateListenerConfig(ctx context.Context, node string, lds *listenerv3.Listener) {
@@ -653,6 +669,10 @@ func listenerStatusEqual(a, b envoyxdsv1alpha1.ListenerStatus) bool {
 
 // ListenerRecast converts Listener CR to Envoy Listener configuration.
 func ListenerRecast(l envoyxdsv1alpha1.Listener, routes []*envoyxdsv1alpha1.Route, node string) (*listenerv3.Listener, error) {
+	return listenerRecast(l, routes, node, nil)
+}
+
+func listenerRecast(l envoyxdsv1alpha1.Listener, routes []*envoyxdsv1alpha1.Route, node string, chains *chainCache) (*listenerv3.Listener, error) {
 	lds := &listenerv3.Listener{}
 
 	ldsData, err := json.Marshal(l.Spec.LDS)
@@ -672,7 +692,7 @@ func ListenerRecast(l envoyxdsv1alpha1.Listener, routes []*envoyxdsv1alpha1.Rout
 		return nil, fmt.Errorf("no routes or filters in listener")
 	}
 
-	lds, err = processRoutes(routes, lds, node)
+	lds, err = processRoutes(routes, lds, node, chains)
 	if err != nil {
 		return nil, fmt.Errorf("unable to process routes: %w", err)
 	}
@@ -690,62 +710,42 @@ func configSource() *corev3.ConfigSource {
 	return cs
 }
 
-func prepareFilters(route envoyxdsv1alpha1.Route, lds *listenerv3.Listener) ([]*listenerv3.Filter, error) {
-	filters := []*listenerv3.Filter{}
-	// Convert route_config to RDS using the generated HCM types
-	if route.Spec.Rds == nil {
-		route.Spec.Rds = &hcmtypes.Rds{}
+func isQUIC(l *listenerv3.Listener) bool {
+	return l.UdpListenerConfig != nil &&
+		l.UdpListenerConfig.QuicOptions != nil &&
+		l.GetAddress().GetSocketAddress().GetProtocol() == corev3.SocketAddress_UDP
+}
+
+func prepareFilters(route *envoyxdsv1alpha1.Route, quic bool) ([]*listenerv3.Filter, error) {
+	// Copies keep the stored Route untouched; the outer route_config shadowed HCM's own.
+	h := route.Spec.HCM
+	h.RouteConfig = nil
+	rdsCfg := hcmtypes.Rds{}
+	if h.Rds != nil {
+		rdsCfg = *h.Rds
 	}
-	route.Spec.Rds.RouteConfigName = route.Name
-	if route.Spec.Rds.ConfigSource == nil {
-		route.Spec.Rds.ConfigSource = &hcmtypes.ConfigSource{}
+	rdsCfg.RouteConfigName = route.Name
+	cs := hcmtypes.ConfigSource{}
+	if rdsCfg.ConfigSource != nil {
+		cs = *rdsCfg.ConfigSource
 	}
 	// ADS config must have content (even empty object) to not be omitted by omitempty
-	route.Spec.Rds.ConfigSource.Ads = &runtime.RawExtension{Raw: []byte("{}")}
-	route.Spec.Rds.ConfigSource.ResourceApiVersion = "V3"
+	cs.Ads = &runtime.RawExtension{Raw: []byte("{}")}
+	cs.ResourceApiVersion = "V3"
+	rdsCfg.ConfigSource = &cs
+	h.Rds = &rdsCfg
 
-	// Ignore filter chain match (it's used separately for the filter chain)
-	route.Spec.FilterChainMatch = nil
-
-	// Marshal the route spec (HCM fields + RDS config)
-	routeData, err := json.Marshal(route.Spec.Route)
+	routeData, err := json.Marshal(h)
 	if err != nil {
 		return nil, fmt.Errorf("json marshaling error: %w", err)
 	}
 
-	// Unmarshal the JSON into a map to remove fields not needed for HCM
-	var data map[string]interface{}
-	err = json.Unmarshal(routeData, &data)
-	if err != nil {
-		return nil, fmt.Errorf("json unmarshalling error: %w", err)
-	}
-
-	// Delete fields that are not part of HCM config
-	delete(data, "route_config")       // RouteConfiguration is sent via RDS
-	delete(data, "filter_chain_match") // Used for filter chain matching
-	delete(data, "listener_refs")      // Custom field for route-to-listener binding
-	delete(data, "tlssecret_ref")      // Custom field for TLS secret binding
-	delete(data, "tlssecret_refs")     // Custom field for TLS secret binding (multiple)
-
-	// Re-marshal the map into JSON
-	routeData, err = json.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
-
 	hManager := &hcm.HttpConnectionManager{}
-
-	// Use protojson to unmarshal HttpConnectionManager
-	err = protojson.Unmarshal(routeData, hManager)
-	if err != nil {
+	if err = protojson.Unmarshal(routeData, hManager); err != nil {
 		return nil, fmt.Errorf("proto unmarshalling error: %w", err)
 	}
 
-	isQuic := lds.UdpListenerConfig != nil &&
-		lds.UdpListenerConfig.QuicOptions != nil &&
-		lds.GetAddress().GetSocketAddress().GetProtocol() == corev3.SocketAddress_UDP
-
-	if isQuic && hManager.CodecType == hcm.HttpConnectionManager_AUTO {
+	if quic && hManager.CodecType == hcm.HttpConnectionManager_AUTO {
 		hManager.CodecType = hcm.HttpConnectionManager_HTTP3
 	}
 
@@ -753,32 +753,29 @@ func prepareFilters(route envoyxdsv1alpha1.Route, lds *listenerv3.Listener) ([]*
 	if err != nil {
 		return nil, fmt.Errorf("failed to create typed config: %w", err)
 	}
-	filters = append(filters, &listenerv3.Filter{
+	return []*listenerv3.Filter{{
 		Name: wellknown.HTTPConnectionManager,
 		ConfigType: &listenerv3.Filter_TypedConfig{
 			TypedConfig: tConfig,
 		},
-	})
-
-	return filters, nil
+	}}, nil
 }
 
-func processRoutes(routes []*envoyxdsv1alpha1.Route, lds *listenerv3.Listener, node string) (*listenerv3.Listener, error) {
-	placed := make([]*fcm.Matcher, 0, len(lds.FilterChains)+len(routes))
+func processRoutes(routes []*envoyxdsv1alpha1.Route, lds *listenerv3.Listener, node string, chains *chainCache) (*listenerv3.Listener, error) {
+	var placed fcm.Set
 	for _, fc := range lds.FilterChains {
 		m, err := fcm.CompileProto(fc.GetFilterChainMatch())
 		if err != nil {
 			return nil, fmt.Errorf("filter chain %q: %w", fc.GetName(), err)
 		}
-		for _, p := range placed {
-			if m.Compare(p) == fcm.Duplicate {
-				return nil, fmt.Errorf("filter chain %q: Envoy cannot tell it apart from another chain in spec.filter_chains", fc.GetName())
-			}
+		if placed.HasDuplicate(m) {
+			return nil, fmt.Errorf("filter chain %q: Envoy cannot tell it apart from another chain in spec.filter_chains", fc.GetName())
 		}
-		placed = append(placed, m)
+		placed.Add(m)
 	}
+	quic := isQUIC(lds)
 	for _, route := range routes {
-		m, err := processRoute(route, lds, node, placed)
+		m, err := processRoute(chains.get(route, quic), route, lds, node, &placed)
 		if errors.Is(err, ErrorDuplicateFound) {
 			continue
 		}
@@ -788,45 +785,96 @@ func processRoutes(routes []*envoyxdsv1alpha1.Route, lds *listenerv3.Listener, n
 			xds.RecordConfigError(route.Name, "LDS", err.Error())
 			continue
 		}
-		placed = append(placed, m)
+		placed.Add(m)
 	}
 	return lds, nil
 }
 
-func processRoute(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listener, node string, placed []*fcm.Matcher) (*fcm.Matcher, error) {
-	var routeFCM *listenerv3.FilterChainMatch
-	var err error
-
-	if route.Spec.FilterChainMatch != nil {
-		routeFCM, err = unmarshalFilterChainMatch(route)
-		if err != nil {
-			return nil, err
-		}
+func processRoute(c *builtChain, route *envoyxdsv1alpha1.Route, lds *listenerv3.Listener, node string, placed *fcm.Set) (*fcm.Matcher, error) {
+	if c.matchErr != nil {
+		return nil, c.matchErr
 	}
-
-	m, err := fcm.CompileProto(routeFCM)
-	if err != nil {
-		return nil, fmt.Errorf("route %q: %w", route.Name, err)
-	}
-	if duplicateFound(route, m, placed, node) {
+	if duplicateFound(route, c.matcher, placed, node) {
 		return nil, ErrorDuplicateFound
 	}
-
-	filters, err := prepareFilters(*route, lds)
-	if err != nil {
-		return nil, fmt.Errorf("unable to prepare filter: %w", err)
+	if c.chainErr != nil {
+		return nil, c.chainErr
 	}
+	lds.FilterChains = append(lds.FilterChains, c.chain)
+	return c.matcher, nil
+}
 
-	filterChain := &listenerv3.FilterChain{
+// builtChain is the filter chain for a route; it depends only on the route and on whether the listener is QUIC.
+type builtChain struct {
+	matcher  *fcm.Matcher
+	matchErr error
+	chain    *listenerv3.FilterChain
+	chainErr error
+}
+
+func buildChain(route *envoyxdsv1alpha1.Route, quic bool) *builtChain {
+	c := &builtChain{}
+	var routeFCM *listenerv3.FilterChainMatch
+	if route.Spec.FilterChainMatch != nil {
+		if routeFCM, c.matchErr = unmarshalFilterChainMatch(route); c.matchErr != nil {
+			return c
+		}
+	}
+	if c.matcher, c.matchErr = fcm.CompileProto(routeFCM); c.matchErr != nil {
+		c.matchErr = fmt.Errorf("route %q: %w", route.Name, c.matchErr)
+		return c
+	}
+	filters, err := prepareFilters(route, quic)
+	if err != nil {
+		c.chainErr = fmt.Errorf("unable to prepare filter: %w", err)
+		return c
+	}
+	c.chain = prepareSecretContext(route, quic, &listenerv3.FilterChain{
 		FilterChainMatch: routeFCM,
 		Filters:          filters,
+	})
+	return c
+}
+
+// chainCache shares built chains across listener rebuilds and nodes. RDS stores a new Route
+// pointer for every change, so the pointer is the key.
+type chainCache struct {
+	mu      sync.Mutex
+	entries map[chainKey]*builtChain
+}
+
+type chainKey struct {
+	route *envoyxdsv1alpha1.Route
+	quic  bool
+}
+
+func (c *chainCache) get(route *envoyxdsv1alpha1.Route, quic bool) *builtChain {
+	if c == nil {
+		return buildChain(route, quic)
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	k := chainKey{route, quic}
+	if b, ok := c.entries[k]; ok {
+		return b
+	}
+	if c.entries == nil {
+		c.entries = make(map[chainKey]*builtChain)
+	}
+	b := buildChain(route, quic)
+	c.entries[k] = b
+	return b
+}
 
-	filterChain = prepareSecretContext(route, lds, filterChain)
-
-	lds.FilterChains = append(lds.FilterChains, filterChain)
-
-	return m, nil
+// prune drops chains of routes RDS no longer stores.
+func (c *chainCache) prune(live map[*envoyxdsv1alpha1.Route]struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.entries {
+		if _, ok := live[k.route]; !ok {
+			delete(c.entries, k)
+		}
+	}
 }
 
 func unmarshalFilterChainMatch(route *envoyxdsv1alpha1.Route) (*listenerv3.FilterChainMatch, error) {
@@ -843,18 +891,15 @@ func unmarshalFilterChainMatch(route *envoyxdsv1alpha1.Route) (*listenerv3.Filte
 
 // duplicateFound reports whether Envoy would reject the listener for holding both
 // the route's chain and one already placed; the older placement wins.
-func duplicateFound(route *envoyxdsv1alpha1.Route, m *fcm.Matcher, placed []*fcm.Matcher, node string) bool {
-	for _, p := range placed {
-		if m.Compare(p) != fcm.Duplicate {
-			continue
-		}
-		const msg = "filter chain duplicates one already on the listener, route skipped"
-		nodeInfo, _ := util.GetNodeInfo(node) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
-		ctrllog.FromContext(context.Background()).Info(msg, "route", route.Name, "node", nodeInfo.Nodes, "cluster", nodeInfo.Clusters)
-		xds.RecordConfigError(route.Name, "LDS", msg)
-		return true
+func duplicateFound(route *envoyxdsv1alpha1.Route, m *fcm.Matcher, placed *fcm.Set, node string) bool {
+	if !placed.HasDuplicate(m) {
+		return false
 	}
-	return false
+	const msg = "filter chain duplicates one already on the listener, route skipped"
+	nodeInfo, _ := util.GetNodeInfo(node) //nolint:errcheck // GetNodeInfo returns empty struct on error, safe to ignore
+	ctrllog.FromContext(context.Background()).Info(msg, "route", route.Name, "node", nodeInfo.Nodes, "cluster", nodeInfo.Clusters)
+	xds.RecordConfigError(route.Name, "LDS", msg)
+	return true
 }
 
 // routeTLSSecretNames returns TLSSecret CR names for the route filter chain transport socket.
@@ -883,7 +928,7 @@ func routeTLSSecretNames(route *envoyxdsv1alpha1.Route) []string {
 	return names
 }
 
-func prepareSecretContext(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listener, filter *listenerv3.FilterChain) *listenerv3.FilterChain {
+func prepareSecretContext(route *envoyxdsv1alpha1.Route, quic bool, filter *listenerv3.FilterChain) *listenerv3.FilterChain {
 	secretNames := routeTLSSecretNames(route)
 	if len(secretNames) == 0 {
 		return filter
@@ -897,11 +942,7 @@ func prepareSecretContext(route *envoyxdsv1alpha1.Route, lds *listenerv3.Listene
 		})
 	}
 
-	isQuic := lds.UdpListenerConfig != nil &&
-		lds.UdpListenerConfig.QuicOptions != nil &&
-		lds.GetAddress().GetSocketAddress().GetProtocol() == corev3.SocketAddress_UDP
-
-	if isQuic {
+	if quic {
 		// Setup QUIC transport socket
 		quicTransport := &quicv3.QuicDownstreamTransport{
 			DownstreamTlsContext: &authv3.DownstreamTlsContext{

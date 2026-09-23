@@ -265,3 +265,31 @@ func covers(pattern, domain string) bool {
 	label, rest, ok := strings.Cut(domain, ".")
 	return ok && label != "" && "."+rest == pattern
 }
+
+// Set holds the matchers placed on one listener. A Duplicate verdict needs a shared
+// server name key, so only matchers under the same key are compared.
+type Set struct {
+	byName map[string][]*Matcher
+}
+
+// Add places m in the set.
+func (s *Set) Add(m *Matcher) {
+	if s.byName == nil {
+		s.byName = make(map[string][]*Matcher)
+	}
+	for _, n := range m.serverNames {
+		s.byName[n] = append(s.byName[n], m)
+	}
+}
+
+// HasDuplicate reports whether a matcher in the set is a Duplicate of m.
+func (s *Set) HasDuplicate(m *Matcher) bool {
+	for _, n := range m.serverNames {
+		for _, p := range s.byName[n] {
+			if m.Compare(p) == Duplicate {
+				return true
+			}
+		}
+	}
+	return false
+}
