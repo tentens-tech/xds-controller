@@ -37,10 +37,26 @@ func routeWith(name string, domains ...string) *routev3.RouteConfiguration {
 	return &routev3.RouteConfiguration{Name: name, VirtualHosts: []*routev3.VirtualHost{{Name: "vh", Domains: domains}}}
 }
 
-func TestGetHash_IgnoresOrder(t *testing.T) {
+func TestGetHash_IgnoresResourceOrder(t *testing.T) {
 	a := map[string][]types.Resource{resource.RouteType: {routeWith("a", "x.example", "y.example"), routeWith("b")}}
-	b := map[string][]types.Resource{resource.RouteType: {routeWith("b"), routeWith("a", "y.example", "x.example")}}
+	b := map[string][]types.Resource{resource.RouteType: {routeWith("b"), routeWith("a", "x.example", "y.example")}}
 	assert.Equal(t, GetHash(a), GetHash(b))
+}
+
+// Moving a route above a catch-all changes what Envoy serves, so the version must change.
+func TestGetHash_SeesRepeatedFieldOrder(t *testing.T) {
+	route := func(prefix string) *routev3.Route {
+		return &routev3.Route{Match: &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_Prefix{Prefix: prefix}}}
+	}
+	withRoutes := func(routes ...*routev3.Route) map[string][]types.Resource {
+		return map[string][]types.Resource{resource.RouteType: {&routev3.RouteConfiguration{
+			Name: "r", VirtualHosts: []*routev3.VirtualHost{{Name: "vh", Routes: routes}},
+		}}}
+	}
+	shadowed := withRoutes(route("/api/"), route("/api/example.v1.Service/Method"))
+	reordered := withRoutes(route("/api/example.v1.Service/Method"), route("/api/"))
+	assert.NotEqual(t, GetHash(shadowed), GetHash(reordered))
+	assert.Equal(t, GetHash(reordered), GetHash(withRoutes(route("/api/example.v1.Service/Method"), route("/api/"))))
 }
 
 func TestGetHash_SeesChanges(t *testing.T) {

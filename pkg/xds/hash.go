@@ -35,7 +35,8 @@ import (
 
 type digest = [sha256.Size]byte
 
-// GetHash returns a version for the resources that ignores the order of resources and of repeated fields.
+// GetHash returns a version for the resources that ignores the order of resources and map entries.
+// Repeated fields keep their order: Envoy reads it as config (first matching route wins).
 func GetHash(resources map[string][]types.Resource) string {
 	var h hasher
 	return h.resources(resources)
@@ -158,11 +159,10 @@ func (h *hasher) fields(m protoreflect.Message) digest {
 		switch {
 		case fd.IsList():
 			l := v.List()
-			elems := make([][]byte, l.Len())
-			for j := range elems {
-				elems[j] = h.value(fd, l.Get(j))
+			writeUint(w, uint64(l.Len()))
+			for j := range l.Len() {
+				writeBytes(w, h.value(fd, l.Get(j)))
 			}
-			writeSorted(w, elems)
 		case fd.IsMap():
 			var entries [][]byte
 			v.Map().Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
