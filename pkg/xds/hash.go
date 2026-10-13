@@ -159,7 +159,7 @@ func (h *hasher) fields(m protoreflect.Message) digest {
 		switch {
 		case fd.IsList():
 			l := v.List()
-			writeUint(w, uint64(l.Len()))
+			writeInt(w, int64(l.Len()))
 			for j := range l.Len() {
 				writeBytes(w, h.value(fd, l.Get(j)))
 			}
