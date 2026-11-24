@@ -33,6 +33,7 @@ import (
 	// Import all common Envoy packages to build the type registry
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
+	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 
 	"github.com/tentens-tech/xds-controller/tools/typegen/internal/envoysrc"
 )
@@ -94,6 +95,8 @@ func buildTypeRegistry() map[string]reflect.Type {
 		endpoint.Endpoint_HealthCheckConfig{},
 		endpoint.Endpoint_AdditionalAddress{},
 		endpoint.LedsClusterLocalityConfig{},
+		// Types referenced only through oneofs
+		matcher.RegexMatcher{},
 	}
 
 	for _, t := range typesToScan {
@@ -329,7 +332,7 @@ func (g *Generator) fetchEnumDefinitions() error {
 	}
 
 	for _, pkg := range slices.Sorted(maps.Keys(fetchedPkgs)) {
-		if err := g.fetchPackageEnums(pkg); err != nil {
+		if err := g.loadPackageEnums(pkg); err != nil {
 			return err
 		}
 	}
@@ -365,42 +368,14 @@ func (g *Generator) discoverPackages(t reflect.Type, seen map[string]bool, visit
 	}
 }
 
-func (g *Generator) fetchPackageEnums(pkgPath string) error {
-	parts := strings.Split(pkgPath, "/")
-	if len(parts) < 3 {
-		return nil
+func (g *Generator) loadPackageEnums(pkgPath string) error {
+	files, err := g.envoySrc.PackageFiles(pkgPath)
+	if err != nil {
+		return err
 	}
-
-	// Common file patterns to try
-	dirName := parts[len(parts)-2]
-	filesToTry := []string{
-		dirName + ".pb.go",
-		dirName + "_components.pb.go",
-		"base.pb.go",
-		"address.pb.go",
-		"health_check.pb.go",
-		"percent.pb.go",
-		"endpoint.pb.go",
-		"endpoint_components.pb.go",
-		"load_report.pb.go",
-		"config_source.pb.go",
-		"grpc_service.pb.go",
-		"socket_option.pb.go",
-		"protocol.pb.go",
-		"backoff.pb.go",
-		"extension.pb.go",
-	}
-
-	for _, file := range filesToTry {
-		content, err := g.envoySrc.ReadPackageFile(pkgPath, file)
-		if err != nil {
-			return err
-		}
-		if content == nil {
-			continue
-		}
-		if err := g.parseEnumsFromReader(bytes.NewReader(content)); err != nil {
-			return fmt.Errorf("parsing %s/%s: %w", pkgPath, file, err)
+	for _, f := range files {
+		if err := g.parseEnumsFromReader(bytes.NewReader(f.Content)); err != nil {
+			return fmt.Errorf("parsing %s/%s: %w", pkgPath, f.Name, err)
 		}
 	}
 	return nil

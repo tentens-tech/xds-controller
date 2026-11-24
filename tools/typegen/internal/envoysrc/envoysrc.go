@@ -18,9 +18,7 @@ package envoysrc
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,20 +39,40 @@ func Locate() (Source, error) {
 	if err != nil {
 		return Source{}, fmt.Errorf("locating %s: %w", modulePath, err)
 	}
-	dir, version, _ := strings.Cut(strings.TrimSpace(string(out)), "\t")
+	dir, version, _ := strings.Cut(strings.TrimRight(string(out), "\r\n"), "\t")
 	if dir == "" {
 		return Source{}, fmt.Errorf("%s is not in the module cache; run go mod download", modulePath)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return Source{}, fmt.Errorf("%s directory %q is missing; run go mod download", modulePath, dir)
 	}
 	return Source{Dir: dir, Version: version}, nil
 }
 
-// ReadPackageFile reads name from pkgPath (e.g. "envoy/config/core/v3").
-// It returns nil content without error when the file does not exist.
-func (s Source) ReadPackageFile(pkgPath, name string) ([]byte, error) {
-	path := filepath.Join(s.Dir, strings.TrimPrefix(pkgPath, "envoy/"), name)
-	content, err := os.ReadFile(path) // #nosec G304 -- path is inside the module cache
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+// File is one generated .pb.go file of a package.
+type File struct {
+	Name    string
+	Content []byte
+}
+
+// PackageFiles returns the .pb.go files of pkgPath (e.g. "envoy/config/core/v3") in name order.
+func (s Source) PackageFiles(pkgPath string) ([]File, error) {
+	dir := filepath.Join(s.Dir, strings.TrimPrefix(pkgPath, "envoy/"))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("reading package %s: %w", pkgPath, err)
 	}
-	return content, err
+	var files []File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".pb.go") || strings.HasSuffix(name, "_vtproto.pb.go") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304 -- path is inside the module cache
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, File{Name: name, Content: content})
+	}
+	return files, nil
 }

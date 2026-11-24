@@ -117,6 +117,12 @@ func buildTypeRegistry() map[string]reflect.Type {
 		envoytype.FractionalPercent{},
 		envoytype.Int64Range{},
 		envoytype.DoubleRange{},
+		// Types referenced only through oneofs
+		matcher.AddressMatcher{},
+		core.AggregatedConfigSource{},
+		core.ApiConfigSource{},
+		core.PathConfigSource{},
+		core.SelfConfigSource{},
 	}
 
 	for _, t := range typesToScan {
@@ -341,7 +347,7 @@ func (g *Generator) fetchEnumDefinitions() error {
 	}
 
 	for _, pkg := range slices.Sorted(maps.Keys(fetchedPkgs)) {
-		if err := g.fetchPackageEnums(pkg); err != nil {
+		if err := g.loadPackageEnums(pkg); err != nil {
 			return err
 		}
 	}
@@ -376,39 +382,14 @@ func (g *Generator) discoverPackages(t reflect.Type, seen map[string]bool, visit
 	}
 }
 
-func (g *Generator) fetchPackageEnums(pkgPath string) error {
-	parts := strings.Split(pkgPath, "/")
-	if len(parts) < 3 {
-		return nil
+func (g *Generator) loadPackageEnums(pkgPath string) error {
+	files, err := g.envoySrc.PackageFiles(pkgPath)
+	if err != nil {
+		return err
 	}
-
-	dirName := parts[len(parts)-2]
-
-	filesToTry := []string{
-		dirName + ".pb.go",
-		dirName + "_components.pb.go",
-		"base.pb.go",
-		"route.pb.go",
-		"route_components.pb.go",
-		"string.pb.go",
-		"regex.pb.go",
-		"metadata.pb.go",
-		"value.pb.go",
-		"number.pb.go",
-		"range.pb.go",
-		"percent.pb.go",
-	}
-
-	for _, file := range filesToTry {
-		content, err := g.envoySrc.ReadPackageFile(pkgPath, file)
-		if err != nil {
-			return err
-		}
-		if content == nil {
-			continue
-		}
-		if err := g.parseEnumsFromReader(bytes.NewReader(content)); err != nil {
-			return fmt.Errorf("parsing %s/%s: %w", pkgPath, file, err)
+	for _, f := range files {
+		if err := g.parseEnumsFromReader(bytes.NewReader(f.Content)); err != nil {
+			return fmt.Errorf("parsing %s/%s: %w", pkgPath, f.Name, err)
 		}
 	}
 	return nil
