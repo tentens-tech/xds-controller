@@ -151,7 +151,7 @@ func (r *ListenerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_
 	// Wait until RDS has listed and placed routes, so listeners are not built without them.
 	rs := r.Config.ReconciliationStatus
 	if !rs.IsRoutesInitialized() || !rs.IsRoutesReconciled() || !rs.IsDomainConfigsReconciled() {
-		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 	}
 	// A failed reconcile is retried, so the listener stays pending until a rebuild succeeds.
 	pendingKey := req.String()

@@ -109,7 +109,3 @@ type EndpointList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Endpoint `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&Endpoint{}, &EndpointList{})
-}

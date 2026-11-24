@@ -182,7 +182,3 @@ type TLSSecretList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []TLSSecret `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&TLSSecret{}, &TLSSecretList{})
-}
