@@ -17,18 +17,18 @@ package main
 
 import (
 	"bufio"
-	"context"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	// Import all common Envoy packages to build the type registry
 	accesslog "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
@@ -37,6 +37,8 @@ import (
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+
+	"github.com/tentens-tech/xds-controller/tools/typegen/internal/envoysrc"
 )
 
 // buildTypeRegistry creates a map of type names to their reflect.Type
@@ -147,7 +149,7 @@ func buildTypeRegistry() map[string]reflect.Type {
 
 	for _, t := range typesToScan {
 		rt := reflect.TypeOf(t)
-		if rt.Kind() == reflect.Ptr {
+		if rt.Kind() == reflect.Pointer {
 			rt = rt.Elem()
 		}
 		if rt.Kind() == reflect.Struct {
@@ -161,24 +163,29 @@ func buildTypeRegistry() map[string]reflect.Type {
 var (
 	outputDir = flag.String("output", "pkg/xds/types/hcm", "Output directory")
 	verbose   = flag.Bool("v", false, "Verbose output")
-	envoyTag  = flag.String("envoy-tag", "v1.36.0", "Envoy module tag for fetching source")
 )
-
-const githubRawBase = "https://raw.githubusercontent.com/envoyproxy/go-control-plane"
 
 func main() {
 	flag.Parse()
 
+	src, err := envoysrc.Locate()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	gen := &Generator{
 		outputDir:      *outputDir,
 		verbose:        *verbose,
-		envoyTag:       *envoyTag,
+		envoySrc:       src,
 		processedTypes: make(map[string]bool),
 		imports:        make(map[string]string),
 		enumDefs:       make(map[string]*EnumDef),
 		typeDefs:       make(map[string]*TypeDef),
 		oneofWrappers:  make(map[string][]OneofOption),
 		typeRegistry:   buildTypeRegistry(),
+		typeNames:      make(map[reflect.Type]string),
+		nameOwners:     make(map[string]reflect.Type),
 		skipFields:     make(map[string]map[string]bool),
 	}
 
@@ -186,6 +193,9 @@ func main() {
 	gen.skipFields["HCM"] = map[string]bool{
 		"RouteConfig": true, // Will be provided by route.Route type
 	}
+
+	// Keeps the short name for the type existing CRs were generated with.
+	gen.claimNames(reflect.TypeOf(route.RetryPolicy{}))
 
 	if err := gen.Generate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -225,7 +235,7 @@ type OneofOption struct {
 type Generator struct {
 	outputDir      string
 	verbose        bool
-	envoyTag       string
+	envoySrc       envoysrc.Source
 	processedTypes map[string]bool
 	imports        map[string]string
 	enumDefs       map[string]*EnumDef
@@ -233,6 +243,8 @@ type Generator struct {
 	typeQueue      []queuedType
 	oneofWrappers  map[string][]OneofOption
 	typeRegistry   map[string]reflect.Type
+	typeNames      map[reflect.Type]string
+	nameOwners     map[string]reflect.Type
 	skipFields     map[string]map[string]bool
 }
 
@@ -247,7 +259,9 @@ func (g *Generator) Generate() error {
 	}
 
 	fmt.Println("Fetching enum definitions from GitHub...")
-	g.fetchEnumDefinitions()
+	if err := g.fetchEnumDefinitions(); err != nil {
+		return err
+	}
 
 	// Start with the HttpConnectionManager type
 	hcmType := reflect.TypeOf(hcm.HttpConnectionManager{})
@@ -328,7 +342,8 @@ func (g *Generator) replaceEmptyTypeRef(fieldType string, emptyTypes map[string]
 func (g *Generator) replaceRecursiveTypes() {
 	g.imports["k8s.io/apimachinery/pkg/runtime"] = "runtime"
 
-	for typeName, typeDef := range g.typeDefs {
+	for _, typeName := range slices.Sorted(maps.Keys(g.typeDefs)) {
+		typeDef := g.typeDefs[typeName]
 		for i, field := range typeDef.Fields {
 			if g.isRecursiveField(typeName, field.Type) {
 				var newType string
@@ -346,12 +361,13 @@ func (g *Generator) replaceRecursiveTypes() {
 	}
 }
 
-func (g *Generator) fetchEnumDefinitions() {
+func (g *Generator) fetchEnumDefinitions() error {
 	fetchedPkgs := make(map[string]bool)
 
 	// Discover packages from all types in the registry
+	visited := make(map[reflect.Type]bool)
 	for _, rt := range g.typeRegistry {
-		g.discoverPackages(rt, fetchedPkgs)
+		g.discoverPackages(rt, fetchedPkgs, visited)
 	}
 
 	// Also add HCM and related packages explicitly
@@ -364,47 +380,48 @@ func (g *Generator) fetchEnumDefinitions() {
 		fmt.Printf("Discovered %d packages to fetch\n", len(fetchedPkgs))
 	}
 
-	for pkg := range fetchedPkgs {
-		g.fetchPackageEnums(pkg)
+	for _, pkg := range slices.Sorted(maps.Keys(fetchedPkgs)) {
+		if err := g.fetchPackageEnums(pkg); err != nil {
+			return err
+		}
 	}
 
 	if g.verbose {
 		fmt.Printf("Found %d enum definitions\n", len(g.enumDefs))
 	}
+	return nil
 }
 
-func (g *Generator) discoverPackages(t reflect.Type, seen map[string]bool) {
-	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice {
+func (g *Generator) discoverPackages(t reflect.Type, seen map[string]bool, visited map[reflect.Type]bool) {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
 		t = t.Elem()
 	}
 
-	if t.Kind() != reflect.Struct {
+	if t.Kind() != reflect.Struct || visited[t] {
 		return
 	}
+	visited[t] = true
 
 	pkgPath := t.PkgPath()
 	if !strings.Contains(pkgPath, "envoyproxy") {
 		return
 	}
 
+	// Extract the envoy subpath (e.g., "envoy/config/endpoint/v3")
 	if idx := strings.Index(pkgPath, "envoy/"); idx != -1 {
-		subPath := pkgPath[idx:]
-		if !seen[subPath] {
-			seen[subPath] = true
-			for i := 0; i < t.NumField(); i++ {
-				g.discoverPackages(t.Field(i).Type, seen)
-			}
+		seen[pkgPath[idx:]] = true
+		for i := 0; i < t.NumField(); i++ {
+			g.discoverPackages(t.Field(i).Type, seen, visited)
 		}
 	}
 }
 
-func (g *Generator) fetchPackageEnums(pkgPath string) {
+func (g *Generator) fetchPackageEnums(pkgPath string) error {
 	parts := strings.Split(pkgPath, "/")
 	if len(parts) < 3 {
-		return
+		return nil
 	}
 
-	baseURL := fmt.Sprintf("%s/envoy/%s/%s", githubRawBase, g.envoyTag, pkgPath)
 	dirName := parts[len(parts)-2]
 
 	filesToTry := []string{
@@ -421,34 +438,18 @@ func (g *Generator) fetchPackageEnums(pkgPath string) {
 	}
 
 	for _, file := range filesToTry {
-		fileURL := fmt.Sprintf("%s/%s", baseURL, file)
-		if g.verbose {
-			fmt.Printf("Fetching %s\n", fileURL)
+		content, err := g.envoySrc.ReadPackageFile(pkgPath, file)
+		if err != nil {
+			return err
 		}
-		_ = g.fetchAndParseEnums(fileURL) //nolint:errcheck // Ignore error - some files may not exist
+		if content == nil {
+			continue
+		}
+		if err := g.parseEnumsFromReader(bytes.NewReader(content)); err != nil {
+			return fmt.Errorf("parsing %s/%s: %w", pkgPath, file, err)
+		}
 	}
-}
-
-func (g *Generator) fetchAndParseEnums(fileURL string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, http.NoBody)
-	if err != nil {
-		return err
-	}
-
-	resp, err := http.DefaultClient.Do(req) // #nosec G107 -- URL is constructed from trusted package paths
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // closing body in defer
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	return g.parseEnumsFromReader(resp.Body)
+	return nil
 }
 
 // pendingOneofField holds a discovered oneof field that needs to be matched to its interface later
@@ -472,7 +473,7 @@ func (g *Generator) parseEnumsFromReader(r io.Reader) error {
 	oneofWrapperPattern := regexp.MustCompile(`^type\s+(\w+)_(\w+)\s+struct\s*\{`)
 	oneofFieldPattern := regexp.MustCompile(`^\s*(\w+)\s+(\S+)\s+` + "`" + `protobuf:"[^"]*name=([^,"]+)[^"]*,oneof"`)
 	// Pattern to match interface implementation: func (*ParentType_FieldName) isParentType_InterfaceName() {}
-	oneofImplPattern := regexp.MustCompile(`^func\s+\(\*(\w+)_(\w+)\)\s+(is\w+)\(\)\s*\{\}`)
+	oneofImplPattern := regexp.MustCompile(`^func\s+\(\*(\w+)_(\w+)\)\s+(is\w+)\(\)\s*\{\}?\s*$`)
 
 	oneofInterfaces := make(map[string]bool)
 	// Map from "ParentType_FieldName" to its interface name
@@ -595,18 +596,25 @@ func (g *Generator) parseEnumsFromReader(r io.Reader) error {
 		ifaceName, hasExactMatch := wrapperToInterface[pf.wrapperKey]
 
 		if !hasExactMatch {
-			// Fall back to finding any matching interface (for backwards compatibility)
-			parts := strings.SplitN(pf.wrapperKey, "_", 2)
-			if len(parts) < 2 {
+			// Fall back to the parent message's only oneof interface, if unambiguous.
+			idx := strings.LastIndex(pf.wrapperKey, "_")
+			if idx < 0 {
 				continue
 			}
-			parentType := parts[0]
+			prefix := "is" + pf.wrapperKey[:idx] + "_"
+			var candidates []string
 			for iface := range oneofInterfaces {
-				if strings.HasPrefix(iface, "is"+parentType+"_") {
-					ifaceName = iface
-					break
+				if strings.HasPrefix(iface, prefix) && !strings.Contains(iface[len(prefix):], "_") {
+					candidates = append(candidates, iface)
 				}
 			}
+			if len(candidates) != 1 {
+				if g.verbose {
+					fmt.Printf("  Skipping oneof %s: %d candidate interfaces\n", pf.wrapperKey, len(candidates))
+				}
+				continue
+			}
+			ifaceName = candidates[0]
 		}
 
 		if ifaceName == "" {
@@ -658,7 +666,7 @@ func (g *Generator) queueDiscoveredType(fieldType string) {
 }
 
 func (g *Generator) queueType(t reflect.Type, outputName string) {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -680,7 +688,7 @@ func (g *Generator) queueType(t reflect.Type, outputName string) {
 }
 
 func (g *Generator) processType(t reflect.Type, outputName string) {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -940,7 +948,7 @@ func (g *Generator) typesNeedingTypedConfig(typeName string) bool {
 
 func (g *Generator) mapFieldType(t reflect.Type) string {
 	switch t.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		inner := g.mapFieldType(t.Elem())
 		if inner == "" {
 			return ""
@@ -1032,11 +1040,58 @@ func (g *Generator) mapStructType(t reflect.Type) string {
 	}
 
 	if strings.Contains(pkgPath, "envoyproxy") {
-		g.queueType(t, typeName)
-		return "*" + typeName
+		name := g.nameFor(t)
+		g.queueType(t, name)
+		return "*" + name
 	}
 
 	return ""
+}
+
+// nameFor returns t's Go name, package-qualified when another type already owns the short name.
+func (g *Generator) nameFor(t reflect.Type) string {
+	if name, ok := g.typeNames[t]; ok {
+		return name
+	}
+	name := t.Name()
+	if owner, ok := g.nameOwners[name]; ok && owner != t {
+		name = packagePrefix(t.PkgPath()) + name
+	}
+	g.typeNames[t] = name
+	g.nameOwners[name] = t
+	return name
+}
+
+// claimNames reserves short names for t and the envoy types it references.
+func (g *Generator) claimNames(t reflect.Type) {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Map {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct || !strings.Contains(t.PkgPath(), "envoyproxy") {
+		return
+	}
+	if _, ok := g.typeNames[t]; ok {
+		return
+	}
+	g.nameFor(t)
+	for i := 0; i < t.NumField(); i++ {
+		g.claimNames(t.Field(i).Type)
+	}
+}
+
+// packagePrefix turns ".../config/core/v3" into "Core".
+func packagePrefix(pkgPath string) string {
+	parts := strings.Split(pkgPath, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	var b strings.Builder
+	for _, w := range strings.Split(parts[len(parts)-2], "_") {
+		if w != "" {
+			b.WriteString(strings.ToUpper(w[:1]) + w[1:])
+		}
+	}
+	return b.String()
 }
 
 func (g *Generator) mapEnumType(t reflect.Type) string {
@@ -1071,7 +1126,7 @@ func (g *Generator) writeOutput() error {
 
 	buf.WriteString("// Code generated by tools/typegen/hcm. DO NOT EDIT.\n")
 	buf.WriteString("// Source: github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3\n")
-	buf.WriteString(fmt.Sprintf("// Envoy version: %s\n", g.envoyTag))
+	fmt.Fprintf(&buf, "// Envoy version: %s\n", g.envoySrc.Version)
 	buf.WriteString("// To regenerate: make generate-hcm\n\n")
 	buf.WriteString("package hcm\n\n")
 
@@ -1088,7 +1143,7 @@ func (g *Generator) writeOutput() error {
 		buf.WriteString("\n")
 		for _, path := range importPaths {
 			alias := g.imports[path]
-			buf.WriteString(fmt.Sprintf("\t%s %q\n", alias, path))
+			fmt.Fprintf(&buf, "\t%s %q\n", alias, path)
 		}
 	}
 	buf.WriteString(")\n\n")

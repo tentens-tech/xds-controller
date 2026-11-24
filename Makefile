@@ -55,41 +55,38 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
-# Envoy module version for type generation (should match go.mod)
-ENVOY_TAG ?= v1.36.0
-
 .PHONY: generate-types
 generate-types: generate-cds generate-lds generate-rds generate-eds generate-hcm ## Generate all xDS types from go-control-plane
 	@echo "Type generation complete. Run 'make generate' to regenerate DeepCopy methods."
 
 .PHONY: generate-cds
 generate-cds: ## Generate CDS (Cluster) types from go-control-plane
-	@echo "Generating CDS types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/cds -output pkg/xds/types/cds -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating CDS types from go-control-plane in go.mod..."
+	go run ./tools/typegen/cds -output pkg/xds/types/cds -v
 	gofmt -w pkg/xds/types/cds/
 
 .PHONY: generate-lds
 generate-lds: ## Generate LDS (Listener) types from go-control-plane
-	@echo "Generating LDS types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/lds -output pkg/xds/types/lds -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating LDS types from go-control-plane in go.mod..."
+	go run ./tools/typegen/lds -output pkg/xds/types/lds -v
 	gofmt -w pkg/xds/types/lds/
 
 .PHONY: generate-rds
 generate-rds: ## Generate RDS (Route) types from go-control-plane
-	@echo "Generating RDS types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/rds -output pkg/xds/types/rds -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating RDS types from go-control-plane in go.mod..."
+	go run ./tools/typegen/rds -output pkg/xds/types/rds -v
 	gofmt -w pkg/xds/types/rds/
 
 .PHONY: generate-eds
 generate-eds: ## Generate EDS (Endpoint) types from go-control-plane
-	@echo "Generating EDS types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/eds -output pkg/xds/types/eds -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating EDS types from go-control-plane in go.mod..."
+	go run ./tools/typegen/eds -output pkg/xds/types/eds -v
 	gofmt -w pkg/xds/types/eds/
 
 .PHONY: generate-hcm
 generate-hcm: ## Generate HCM (HTTP Connection Manager) types from go-control-plane
-	@echo "Generating HCM types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/hcm -output pkg/xds/types/hcm -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating HCM types from go-control-plane in go.mod..."
+	go run ./tools/typegen/hcm -output pkg/xds/types/hcm -v
 	gofmt -w pkg/xds/types/hcm/
 
 .PHONY: generateall
