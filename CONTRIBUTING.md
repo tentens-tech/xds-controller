@@ -21,7 +21,7 @@ This project and everyone participating in it is governed by our [Code of Conduc
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.26+
 - Docker
 - kubectl
 - A Kubernetes cluster (local: [KIND](https://sigs.k8s.io/kind), [minikube](https://minikube.sigs.k8s.io/), or [k3d](https://k3d.io/))

@@ -347,7 +347,7 @@ Every Route becomes one filter chain on each listener in `listener_refs`, on eac
 
 `destination_port` → `prefix_ranges` → `server_names` → `transport_protocol` → `application_protocols` → `direct_source_prefix_ranges` → `source_type` → `source_prefix_ranges` → `source_ports`
 
-An empty criterion counts as its own value, and chains that set it win over chains that leave it empty. Envoy rejects the whole listener when two chains land on the same value at every step. The controller runs the same check before it sends the config, so a bad pair of Routes never reaches Envoy. The rules below are checked against Envoy 1.31 and 1.36 in CI.
+An empty criterion counts as its own value, and chains that set it win over chains that leave it empty. Envoy rejects the whole listener when two chains land on the same value at every step. The controller runs the same check before it sends the config, so a bad pair of Routes never reaches Envoy. The rules below are checked against Envoy 1.31 and 1.40 in CI.
 
 ### When two Routes conflict
 
