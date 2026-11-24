@@ -472,11 +472,36 @@ spec:
                       description: StringMatcher represents the Envoy StringMatcher
                         configuration.
                       properties:
+                        contains:
+                          type: string
+                        custom:
+                          description: TypedExtensionConfig represents the Envoy TypedExtensionConfig
+                            configuration.
+                          properties:
+                            name:
+                              type: string
+                            typed_config:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                          type: object
+                        exact:
+                          type: string
                         ignore_case:
                           type: boolean
-                        typed_config:
+                        prefix:
+                          type: string
+                        safe_regex:
+                          description: RegexMatcher represents the Envoy RegexMatcher
+                            configuration.
+                          properties:
+                            google_re2:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            regex:
+                              type: string
                           type: object
-                          x-kubernetes-preserve-unknown-fields: true
+                        suffix:
+                          type: string
                       type: object
                     type: array
                   override_stream_error_on_invalid_http_message:
@@ -692,6 +717,9 @@ spec:
                               x-kubernetes-preserve-unknown-fields: true
                           type: object
                         type: array
+                      json_format:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
                       json_format_options:
                         description: JsonFormatOptions represents the Envoy JsonFormatOptions
                           configuration.
@@ -701,6 +729,30 @@ spec:
                         type: object
                       omit_empty_values:
                         type: boolean
+                      text_format:
+                        type: string
+                      text_format_source:
+                        description: DataSource represents the Envoy DataSource configuration.
+                        properties:
+                          environment_variable:
+                            type: string
+                          filename:
+                            type: string
+                          inline_bytes:
+                            format: byte
+                            type: string
+                          inline_string:
+                            type: string
+                          watched_directory:
+                            description: WatchedDirectory represents the Envoy WatchedDirectory
+                              configuration.
+                            properties:
+                              path:
+                                type: string
+                              watch_modify:
+                                type: boolean
+                            type: object
+                        type: object
                     type: object
                   mappers:
                     items:
@@ -748,6 +800,9 @@ spec:
                                     x-kubernetes-preserve-unknown-fields: true
                                 type: object
                               type: array
+                            json_format:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
                             json_format_options:
                               description: JsonFormatOptions represents the Envoy
                                 JsonFormatOptions configuration.
@@ -757,6 +812,31 @@ spec:
                               type: object
                             omit_empty_values:
                               type: boolean
+                            text_format:
+                              type: string
+                            text_format_source:
+                              description: DataSource represents the Envoy DataSource
+                                configuration.
+                              properties:
+                                environment_variable:
+                                  type: string
+                                filename:
+                                  type: string
+                                inline_bytes:
+                                  format: byte
+                                  type: string
+                                inline_string:
+                                  type: string
+                                watched_directory:
+                                  description: WatchedDirectory represents the Envoy
+                                    WatchedDirectory configuration.
+                                  properties:
+                                    path:
+                                      type: string
+                                    watch_modify:
+                                      type: boolean
+                                  type: object
+                              type: object
                           type: object
                         filter:
                           description: AccessLogFilter represents the Envoy AccessLogFilter
@@ -847,6 +927,9 @@ spec:
                                       description: RegexMatcher represents the Envoy
                                         RegexMatcher configuration.
                                       properties:
+                                        google_re2:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
                                         regex:
                                           type: string
                                       type: object
@@ -854,11 +937,36 @@ spec:
                                       description: StringMatcher represents the Envoy
                                         StringMatcher configuration.
                                       properties:
+                                        contains:
+                                          type: string
+                                        custom:
+                                          description: TypedExtensionConfig represents
+                                            the Envoy TypedExtensionConfig configuration.
+                                          properties:
+                                            name:
+                                              type: string
+                                            typed_config:
+                                              type: object
+                                              x-kubernetes-preserve-unknown-fields: true
+                                          type: object
+                                        exact:
+                                          type: string
                                         ignore_case:
                                           type: boolean
-                                        typed_config:
+                                        prefix:
+                                          type: string
+                                        safe_regex:
+                                          description: RegexMatcher represents the
+                                            Envoy RegexMatcher configuration.
+                                          properties:
+                                            google_re2:
+                                              type: object
+                                              x-kubernetes-preserve-unknown-fields: true
+                                            regex:
+                                              type: string
                                           type: object
-                                          x-kubernetes-preserve-unknown-fields: true
+                                        suffix:
+                                          type: string
                                       type: object
                                     suffix_match:
                                       type: string
@@ -894,17 +1002,94 @@ spec:
                                       type: boolean
                                     path:
                                       items:
+                                        description: MetadataMatcher_PathSegment represents
+                                          the Envoy MetadataMatcher_PathSegment configuration.
+                                        properties:
+                                          key:
+                                            type: string
                                         type: object
-                                        x-kubernetes-preserve-unknown-fields: true
                                       type: array
-                                      x-kubernetes-preserve-unknown-fields: true
                                     value:
                                       description: ValueMatcher represents the Envoy
                                         ValueMatcher configuration.
                                       properties:
-                                        typed_config:
+                                        bool_match:
+                                          type: boolean
+                                        double_match:
+                                          description: DoubleMatcher represents the
+                                            Envoy DoubleMatcher configuration.
+                                          properties:
+                                            exact:
+                                              type: number
+                                            range:
+                                              description: DoubleRange represents
+                                                the Envoy DoubleRange configuration.
+                                              properties:
+                                                end:
+                                                  type: number
+                                                start:
+                                                  type: number
+                                              type: object
+                                          type: object
+                                        list_match:
+                                          description: ListMatcher represents the
+                                            Envoy ListMatcher configuration.
+                                          properties:
+                                            one_of:
+                                              type: object
+                                              x-kubernetes-preserve-unknown-fields: true
+                                          type: object
+                                        null_match:
                                           type: object
                                           x-kubernetes-preserve-unknown-fields: true
+                                        or_match:
+                                          description: OrMatcher represents the Envoy
+                                            OrMatcher configuration.
+                                          properties:
+                                            value_matchers:
+                                              items:
+                                                type: object
+                                                x-kubernetes-preserve-unknown-fields: true
+                                              type: array
+                                              x-kubernetes-preserve-unknown-fields: true
+                                          type: object
+                                        present_match:
+                                          type: boolean
+                                        string_match:
+                                          description: StringMatcher represents the
+                                            Envoy StringMatcher configuration.
+                                          properties:
+                                            contains:
+                                              type: string
+                                            custom:
+                                              description: TypedExtensionConfig represents
+                                                the Envoy TypedExtensionConfig configuration.
+                                              properties:
+                                                name:
+                                                  type: string
+                                                typed_config:
+                                                  type: object
+                                                  x-kubernetes-preserve-unknown-fields: true
+                                              type: object
+                                            exact:
+                                              type: string
+                                            ignore_case:
+                                              type: boolean
+                                            prefix:
+                                              type: string
+                                            safe_regex:
+                                              description: RegexMatcher represents
+                                                the Envoy RegexMatcher configuration.
+                                              properties:
+                                                google_re2:
+                                                  type: object
+                                                  x-kubernetes-preserve-unknown-fields: true
+                                                regex:
+                                                  type: string
+                                              type: object
+                                            suffix:
+                                              type: string
+                                          type: object
                                       type: object
                                   type: object
                               type: object
@@ -1034,10 +1219,17 @@ spec:
                     properties:
                       operations:
                         items:
+                          description: PathTransformation_Operation represents the
+                            Envoy PathTransformation_Operation configuration.
+                          properties:
+                            merge_slashes:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            normalize_path_rfc_3986:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
                           type: object
-                          x-kubernetes-preserve-unknown-fields: true
                         type: array
-                        x-kubernetes-preserve-unknown-fields: true
                     type: object
                   http_filter_transformation:
                     description: PathTransformation represents the Envoy PathTransformation
@@ -1045,10 +1237,17 @@ spec:
                     properties:
                       operations:
                         items:
+                          description: PathTransformation_Operation represents the
+                            Envoy PathTransformation_Operation configuration.
+                          properties:
+                            merge_slashes:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            normalize_path_rfc_3986:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
                           type: object
-                          x-kubernetes-preserve-unknown-fields: true
                         type: array
-                        x-kubernetes-preserve-unknown-fields: true
                     type: object
                 type: object
               path_with_escaped_slashes_action:
@@ -1472,11 +1671,160 @@ spec:
                         description: ConfigSource represents the Envoy ConfigSource
                           configuration.
                         properties:
+                          ads:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                          api_config_source:
+                            description: ApiConfigSource represents the Envoy ApiConfigSource
+                              configuration.
+                            properties:
+                              api_type:
+                                description: ApiConfigSource_ApiType is an enum type.
+                                type: string
+                              cluster_names:
+                                items:
+                                  type: string
+                                type: array
+                              config_validators:
+                                items:
+                                  description: TypedExtensionConfig represents the
+                                    Envoy TypedExtensionConfig configuration.
+                                  properties:
+                                    name:
+                                      type: string
+                                    typed_config:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                  type: object
+                                type: array
+                              grpc_services:
+                                items:
+                                  description: GrpcService represents the Envoy GrpcService
+                                    configuration.
+                                  properties:
+                                    envoy_grpc:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                    google_grpc:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                    initial_metadata:
+                                      items:
+                                        description: HeaderValue represents the Envoy
+                                          HeaderValue configuration.
+                                        properties:
+                                          key:
+                                            type: string
+                                          raw_value:
+                                            format: byte
+                                            type: string
+                                          value:
+                                            type: string
+                                        type: object
+                                      type: array
+                                    retry_policy:
+                                      description: CoreRetryPolicy represents the
+                                        Envoy CoreRetryPolicy configuration.
+                                      properties:
+                                        host_selection_retry_max_attempts:
+                                          format: int64
+                                          type: integer
+                                        num_retries:
+                                          format: int32
+                                          type: integer
+                                        retry_back_off:
+                                          description: BackoffStrategy represents
+                                            the Envoy BackoffStrategy configuration.
+                                          properties:
+                                            base_interval:
+                                              type: string
+                                            max_interval:
+                                              type: string
+                                          type: object
+                                        retry_host_predicate:
+                                          items:
+                                            description: CoreRetryPolicy_RetryHostPredicate
+                                              represents the Envoy CoreRetryPolicy_RetryHostPredicate
+                                              configuration.
+                                            properties:
+                                              name:
+                                                type: string
+                                              typed_config:
+                                                type: object
+                                                x-kubernetes-preserve-unknown-fields: true
+                                            type: object
+                                          type: array
+                                        retry_on:
+                                          type: string
+                                        retry_priority:
+                                          description: CoreRetryPolicy_RetryPriority
+                                            represents the Envoy CoreRetryPolicy_RetryPriority
+                                            configuration.
+                                          properties:
+                                            name:
+                                              type: string
+                                            typed_config:
+                                              type: object
+                                              x-kubernetes-preserve-unknown-fields: true
+                                          type: object
+                                      type: object
+                                    timeout:
+                                      type: string
+                                  type: object
+                                type: array
+                              rate_limit_settings:
+                                description: RateLimitSettings represents the Envoy
+                                  RateLimitSettings configuration.
+                                properties:
+                                  fill_rate:
+                                    type: number
+                                  max_tokens:
+                                    format: int32
+                                    type: integer
+                                type: object
+                              refresh_delay:
+                                type: string
+                              request_timeout:
+                                type: string
+                              set_node_on_first_message_only:
+                                type: boolean
+                              transport_api_version:
+                                description: ApiVersion is an enum type.
+                                type: string
+                            type: object
                           initial_fetch_timeout:
                             type: string
+                          path:
+                            type: string
+                          path_config_source:
+                            description: PathConfigSource represents the Envoy PathConfigSource
+                              configuration.
+                            properties:
+                              path:
+                                type: string
+                              poll_interval:
+                                type: string
+                              watched_directory:
+                                description: WatchedDirectory represents the Envoy
+                                  WatchedDirectory configuration.
+                                properties:
+                                  path:
+                                    type: string
+                                  watch_modify:
+                                    type: boolean
+                                type: object
+                            type: object
                           resource_api_version:
                             description: ApiVersion is an enum type.
                             type: string
+                          self:
+                            description: SelfConfigSource represents the Envoy SelfConfigSource
+                              configuration.
+                            properties:
+                              transport_api_version:
+                                description: ApiVersion is an enum type.
+                                type: string
+                            type: object
                         type: object
                     type: object
                   vhost_header:
@@ -2168,6 +2516,9 @@ spec:
                                               x-kubernetes-preserve-unknown-fields: true
                                           type: object
                                         type: array
+                                      json_format:
+                                        type: object
+                                        x-kubernetes-preserve-unknown-fields: true
                                       json_format_options:
                                         description: JsonFormatOptions represents
                                           the Envoy JsonFormatOptions configuration.
@@ -2177,6 +2528,31 @@ spec:
                                         type: object
                                       omit_empty_values:
                                         type: boolean
+                                      text_format:
+                                        type: string
+                                      text_format_source:
+                                        description: DataSource represents the Envoy
+                                          DataSource configuration.
+                                        properties:
+                                          environment_variable:
+                                            type: string
+                                          filename:
+                                            type: string
+                                          inline_bytes:
+                                            format: byte
+                                            type: string
+                                          inline_string:
+                                            type: string
+                                          watched_directory:
+                                            description: WatchedDirectory represents
+                                              the Envoy WatchedDirectory configuration.
+                                            properties:
+                                              path:
+                                                type: string
+                                              watch_modify:
+                                                type: boolean
+                                            type: object
+                                        type: object
                                     type: object
                                   status:
                                     format: int32
@@ -2367,7 +2743,21 @@ spec:
                                       description: CustomTag represents the Envoy
                                         CustomTag configuration.
                                       properties:
+                                        environment:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
+                                        literal:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
+                                        metadata:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
+                                        request_header:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
                                         tag:
+                                          type: string
+                                        value:
                                           type: string
                                         value_type:
                                           description: CustomTag_ValueType is an enum
@@ -2859,16 +3249,8 @@ spec:
                             ScopedRouteConfiguration configuration.
                           properties:
                             key:
-                              description: ScopedRouteConfiguration_Key represents
-                                the Envoy ScopedRouteConfiguration_Key configuration.
-                              properties:
-                                fragments:
-                                  items:
-                                    type: object
-                                    x-kubernetes-preserve-unknown-fields: true
-                                  type: array
-                                  x-kubernetes-preserve-unknown-fields: true
                               type: object
+                              x-kubernetes-preserve-unknown-fields: true
                             name:
                               type: string
                             on_demand:
@@ -3271,11 +3653,37 @@ spec:
                                               description: StringMatcher represents
                                                 the Envoy StringMatcher configuration.
                                               properties:
+                                                contains:
+                                                  type: string
+                                                custom:
+                                                  description: TypedExtensionConfig
+                                                    represents the Envoy TypedExtensionConfig
+                                                    configuration.
+                                                  properties:
+                                                    name:
+                                                      type: string
+                                                    typed_config:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
+                                                  type: object
+                                                exact:
+                                                  type: string
                                                 ignore_case:
                                                   type: boolean
-                                                typed_config:
+                                                prefix:
+                                                  type: string
+                                                safe_regex:
+                                                  description: RegexMatcher represents
+                                                    the Envoy RegexMatcher configuration.
+                                                  properties:
+                                                    google_re2:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
+                                                    regex:
+                                                      type: string
                                                   type: object
-                                                  x-kubernetes-preserve-unknown-fields: true
+                                                suffix:
+                                                  type: string
                                               type: object
                                             type: array
                                           allow_private_network_access:
@@ -3672,6 +4080,9 @@ spec:
                                                   description: RegexMatcher represents
                                                     the Envoy RegexMatcher configuration.
                                                   properties:
+                                                    google_re2:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
                                                     regex:
                                                       type: string
                                                   type: object
@@ -3679,11 +4090,37 @@ spec:
                                                   description: StringMatcher represents
                                                     the Envoy StringMatcher configuration.
                                                   properties:
+                                                    contains:
+                                                      type: string
+                                                    custom:
+                                                      description: TypedExtensionConfig
+                                                        represents the Envoy TypedExtensionConfig
+                                                        configuration.
+                                                      properties:
+                                                        name:
+                                                          type: string
+                                                        typed_config:
+                                                          type: object
+                                                          x-kubernetes-preserve-unknown-fields: true
+                                                      type: object
+                                                    exact:
+                                                      type: string
                                                     ignore_case:
                                                       type: boolean
-                                                    typed_config:
+                                                    prefix:
+                                                      type: string
+                                                    safe_regex:
+                                                      description: RegexMatcher represents
+                                                        the Envoy RegexMatcher configuration.
+                                                      properties:
+                                                        google_re2:
+                                                          type: object
+                                                          x-kubernetes-preserve-unknown-fields: true
+                                                        regex:
+                                                          type: string
                                                       type: object
-                                                      x-kubernetes-preserve-unknown-fields: true
+                                                    suffix:
+                                                      type: string
                                                   type: object
                                                 suffix_match:
                                                   type: string
@@ -3723,6 +4160,9 @@ spec:
                                                   description: RegexMatcher represents
                                                     the Envoy RegexMatcher configuration.
                                                   properties:
+                                                    google_re2:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
                                                     regex:
                                                       type: string
                                                   type: object
@@ -3730,11 +4170,37 @@ spec:
                                                   description: StringMatcher represents
                                                     the Envoy StringMatcher configuration.
                                                   properties:
+                                                    contains:
+                                                      type: string
+                                                    custom:
+                                                      description: TypedExtensionConfig
+                                                        represents the Envoy TypedExtensionConfig
+                                                        configuration.
+                                                      properties:
+                                                        name:
+                                                          type: string
+                                                        typed_config:
+                                                          type: object
+                                                          x-kubernetes-preserve-unknown-fields: true
+                                                      type: object
+                                                    exact:
+                                                      type: string
                                                     ignore_case:
                                                       type: boolean
-                                                    typed_config:
+                                                    prefix:
+                                                      type: string
+                                                    safe_regex:
+                                                      description: RegexMatcher represents
+                                                        the Envoy RegexMatcher configuration.
+                                                      properties:
+                                                        google_re2:
+                                                          type: object
+                                                          x-kubernetes-preserve-unknown-fields: true
+                                                        regex:
+                                                          type: string
                                                       type: object
-                                                      x-kubernetes-preserve-unknown-fields: true
+                                                    suffix:
+                                                      type: string
                                                   type: object
                                                 suffix_match:
                                                   type: string
@@ -3873,6 +4339,9 @@ spec:
                                                             x-kubernetes-preserve-unknown-fields: true
                                                         type: object
                                                       type: array
+                                                    json_format:
+                                                      type: object
+                                                      x-kubernetes-preserve-unknown-fields: true
                                                     json_format_options:
                                                       description: JsonFormatOptions
                                                         represents the Envoy JsonFormatOptions
@@ -3883,6 +4352,32 @@ spec:
                                                       type: object
                                                     omit_empty_values:
                                                       type: boolean
+                                                    text_format:
+                                                      type: string
+                                                    text_format_source:
+                                                      description: DataSource represents
+                                                        the Envoy DataSource configuration.
+                                                      properties:
+                                                        environment_variable:
+                                                          type: string
+                                                        filename:
+                                                          type: string
+                                                        inline_bytes:
+                                                          format: byte
+                                                          type: string
+                                                        inline_string:
+                                                          type: string
+                                                        watched_directory:
+                                                          description: WatchedDirectory
+                                                            represents the Envoy WatchedDirectory
+                                                            configuration.
+                                                          properties:
+                                                            path:
+                                                              type: string
+                                                            watch_modify:
+                                                              type: boolean
+                                                          type: object
+                                                      type: object
                                                   type: object
                                                 status:
                                                   format: int32
@@ -3950,6 +4445,9 @@ spec:
                                                       description: RegexMatcher represents
                                                         the Envoy RegexMatcher configuration.
                                                       properties:
+                                                        google_re2:
+                                                          type: object
+                                                          x-kubernetes-preserve-unknown-fields: true
                                                         regex:
                                                           type: string
                                                       type: object
@@ -4069,7 +4567,21 @@ spec:
                                                     description: CustomTag represents
                                                       the Envoy CustomTag configuration.
                                                     properties:
+                                                      environment:
+                                                        type: object
+                                                        x-kubernetes-preserve-unknown-fields: true
+                                                      literal:
+                                                        type: object
+                                                        x-kubernetes-preserve-unknown-fields: true
+                                                      metadata:
+                                                        type: object
+                                                        x-kubernetes-preserve-unknown-fields: true
+                                                      request_header:
+                                                        type: object
+                                                        x-kubernetes-preserve-unknown-fields: true
                                                       tag:
+                                                        type: string
+                                                      value:
                                                         type: string
                                                       value_type:
                                                         description: CustomTag_ValueType
@@ -4157,6 +4669,9 @@ spec:
                                                     description: RegexMatcher represents
                                                       the Envoy RegexMatcher configuration.
                                                     properties:
+                                                      google_re2:
+                                                        type: object
+                                                        x-kubernetes-preserve-unknown-fields: true
                                                       regex:
                                                         type: string
                                                     type: object
@@ -4164,11 +4679,38 @@ spec:
                                                     description: StringMatcher represents
                                                       the Envoy StringMatcher configuration.
                                                     properties:
+                                                      contains:
+                                                        type: string
+                                                      custom:
+                                                        description: TypedExtensionConfig
+                                                          represents the Envoy TypedExtensionConfig
+                                                          configuration.
+                                                        properties:
+                                                          name:
+                                                            type: string
+                                                          typed_config:
+                                                            type: object
+                                                            x-kubernetes-preserve-unknown-fields: true
+                                                        type: object
+                                                      exact:
+                                                        type: string
                                                       ignore_case:
                                                         type: boolean
-                                                      typed_config:
+                                                      prefix:
+                                                        type: string
+                                                      safe_regex:
+                                                        description: RegexMatcher
+                                                          represents the Envoy RegexMatcher
+                                                          configuration.
+                                                        properties:
+                                                          google_re2:
+                                                            type: object
+                                                            x-kubernetes-preserve-unknown-fields: true
+                                                          regex:
+                                                            type: string
                                                         type: object
-                                                        x-kubernetes-preserve-unknown-fields: true
+                                                      suffix:
+                                                        type: string
                                                     type: object
                                                   suffix_match:
                                                     type: string
@@ -4258,7 +4800,21 @@ spec:
                     items:
                       description: CustomTag represents the Envoy CustomTag configuration.
                       properties:
+                        environment:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        literal:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        metadata:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        request_header:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
                         tag:
+                          type: string
+                        value:
                           type: string
                         value_type:
                           description: CustomTag_ValueType is an enum type.

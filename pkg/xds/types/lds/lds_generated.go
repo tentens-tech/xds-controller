@@ -86,6 +86,32 @@ func (x ApiVersion) ToInt() int32 {
 	return ApiVersion_value[strings.ToUpper(string(x))]
 }
 
+// CodecClientType is an enum type.
+type CodecClientType string
+
+const (
+	CodecClientType_HTTP1 CodecClientType = "HTTP1"
+	CodecClientType_HTTP2 CodecClientType = "HTTP2"
+	CodecClientType_HTTP3 CodecClientType = "HTTP3"
+)
+
+var (
+	CodecClientType_name = map[int32]string{
+		0: "HTTP1",
+		1: "HTTP2",
+		2: "HTTP3",
+	}
+	CodecClientType_value = map[string]int32{
+		"HTTP1": 0,
+		"HTTP2": 1,
+		"HTTP3": 2,
+	}
+)
+
+func (x CodecClientType) ToInt() int32 {
+	return CodecClientType_value[strings.ToUpper(string(x))]
+}
+
 // ComparisonFilter_Op is an enum type.
 type ComparisonFilter_Op string
 
@@ -264,6 +290,93 @@ func (x HeaderValueOption_HeaderAppendAction) ToInt() int32 {
 	return HeaderValueOption_HeaderAppendAction_value[strings.ToUpper(string(x))]
 }
 
+// HealthStatus is an enum type.
+type HealthStatus string
+
+const (
+	HealthStatus_UNKNOWN   HealthStatus = "UNKNOWN"
+	HealthStatus_HEALTHY   HealthStatus = "HEALTHY"
+	HealthStatus_UNHEALTHY HealthStatus = "UNHEALTHY"
+	HealthStatus_DRAINING  HealthStatus = "DRAINING"
+	HealthStatus_TIMEOUT   HealthStatus = "TIMEOUT"
+	HealthStatus_DEGRADED  HealthStatus = "DEGRADED"
+)
+
+var (
+	HealthStatus_name = map[int32]string{
+		0: "UNKNOWN",
+		1: "HEALTHY",
+		2: "UNHEALTHY",
+		3: "DRAINING",
+		4: "TIMEOUT",
+		5: "DEGRADED",
+	}
+	HealthStatus_value = map[string]int32{
+		"UNKNOWN":   0,
+		"HEALTHY":   1,
+		"UNHEALTHY": 2,
+		"DRAINING":  3,
+		"TIMEOUT":   4,
+		"DEGRADED":  5,
+	}
+)
+
+func (x HealthStatus) ToInt() int32 {
+	return HealthStatus_value[strings.ToUpper(string(x))]
+}
+
+// HistogramEmitMode is an enum type.
+type HistogramEmitMode string
+
+const (
+	HistogramEmitMode_SUMMARY_AND_HISTOGRAM HistogramEmitMode = "SUMMARY_AND_HISTOGRAM"
+	HistogramEmitMode_SUMMARY               HistogramEmitMode = "SUMMARY"
+	HistogramEmitMode_HISTOGRAM             HistogramEmitMode = "HISTOGRAM"
+)
+
+var (
+	HistogramEmitMode_name = map[int32]string{
+		0: "SUMMARY_AND_HISTOGRAM",
+		1: "SUMMARY",
+		2: "HISTOGRAM",
+	}
+	HistogramEmitMode_value = map[string]int32{
+		"SUMMARY_AND_HISTOGRAM": 0,
+		"SUMMARY":               1,
+		"HISTOGRAM":             2,
+	}
+)
+
+func (x HistogramEmitMode) ToInt() int32 {
+	return HistogramEmitMode_value[strings.ToUpper(string(x))]
+}
+
+// HttpProtocolOptions_HeadersWithUnderscoresAction is an enum type.
+type HttpProtocolOptions_HeadersWithUnderscoresAction string
+
+const (
+	HttpProtocolOptions_HeadersWithUnderscoresAction_ALLOW          HttpProtocolOptions_HeadersWithUnderscoresAction = "ALLOW"
+	HttpProtocolOptions_HeadersWithUnderscoresAction_REJECT_REQUEST HttpProtocolOptions_HeadersWithUnderscoresAction = "REJECT_REQUEST"
+	HttpProtocolOptions_HeadersWithUnderscoresAction_DROP_HEADER    HttpProtocolOptions_HeadersWithUnderscoresAction = "DROP_HEADER"
+)
+
+var (
+	HttpProtocolOptions_HeadersWithUnderscoresAction_name = map[int32]string{
+		0: "ALLOW",
+		1: "REJECT_REQUEST",
+		2: "DROP_HEADER",
+	}
+	HttpProtocolOptions_HeadersWithUnderscoresAction_value = map[string]int32{
+		"ALLOW":          0,
+		"REJECT_REQUEST": 1,
+		"DROP_HEADER":    2,
+	}
+)
+
+func (x HttpProtocolOptions_HeadersWithUnderscoresAction) ToInt() int32 {
+	return HttpProtocolOptions_HeadersWithUnderscoresAction_value[strings.ToUpper(string(x))]
+}
+
 // KeyValueAppend_KeyValueAppendAction is an enum type.
 type KeyValueAppend_KeyValueAppendAction string
 
@@ -314,6 +427,113 @@ var (
 
 func (x Listener_DrainType) ToInt() int32 {
 	return Listener_DrainType_value[strings.ToUpper(string(x))]
+}
+
+// ProxyProtocolConfig_Version is an enum type.
+type ProxyProtocolConfig_Version string
+
+const (
+	ProxyProtocolConfig_Version_V1 ProxyProtocolConfig_Version = "V1"
+	ProxyProtocolConfig_Version_V2 ProxyProtocolConfig_Version = "V2"
+)
+
+var (
+	ProxyProtocolConfig_Version_name = map[int32]string{
+		0: "V1",
+		1: "V2",
+	}
+	ProxyProtocolConfig_Version_value = map[string]int32{
+		"V1": 0,
+		"V2": 1,
+	}
+)
+
+func (x ProxyProtocolConfig_Version) ToInt() int32 {
+	return ProxyProtocolConfig_Version_value[strings.ToUpper(string(x))]
+}
+
+// ProxyProtocolPassThroughTLVs_PassTLVsMatchType is an enum type.
+type ProxyProtocolPassThroughTLVs_PassTLVsMatchType string
+
+const (
+	ProxyProtocolPassThroughTLVs_PassTLVsMatchType_INCLUDE_ALL ProxyProtocolPassThroughTLVs_PassTLVsMatchType = "INCLUDE_ALL"
+	ProxyProtocolPassThroughTLVs_PassTLVsMatchType_INCLUDE     ProxyProtocolPassThroughTLVs_PassTLVsMatchType = "INCLUDE"
+)
+
+var (
+	ProxyProtocolPassThroughTLVs_PassTLVsMatchType_name = map[int32]string{
+		0: "INCLUDE_ALL",
+		1: "INCLUDE",
+	}
+	ProxyProtocolPassThroughTLVs_PassTLVsMatchType_value = map[string]int32{
+		"INCLUDE_ALL": 0,
+		"INCLUDE":     1,
+	}
+)
+
+func (x ProxyProtocolPassThroughTLVs_PassTLVsMatchType) ToInt() int32 {
+	return ProxyProtocolPassThroughTLVs_PassTLVsMatchType_value[strings.ToUpper(string(x))]
+}
+
+// RateLimitStrategy_BlanketRule is an enum type.
+type RateLimitStrategy_BlanketRule string
+
+const (
+	RateLimitStrategy_BlanketRule_ALLOW_ALL RateLimitStrategy_BlanketRule = "ALLOW_ALL"
+	RateLimitStrategy_BlanketRule_DENY_ALL  RateLimitStrategy_BlanketRule = "DENY_ALL"
+)
+
+var (
+	RateLimitStrategy_BlanketRule_name = map[int32]string{
+		0: "ALLOW_ALL",
+		1: "DENY_ALL",
+	}
+	RateLimitStrategy_BlanketRule_value = map[string]int32{
+		"ALLOW_ALL": 0,
+		"DENY_ALL":  1,
+	}
+)
+
+func (x RateLimitStrategy_BlanketRule) ToInt() int32 {
+	return RateLimitStrategy_BlanketRule_value[strings.ToUpper(string(x))]
+}
+
+// RateLimitUnit is an enum type.
+type RateLimitUnit string
+
+const (
+	RateLimitUnit_UNKNOWN RateLimitUnit = "UNKNOWN"
+	RateLimitUnit_SECOND  RateLimitUnit = "SECOND"
+	RateLimitUnit_MINUTE  RateLimitUnit = "MINUTE"
+	RateLimitUnit_HOUR    RateLimitUnit = "HOUR"
+	RateLimitUnit_DAY     RateLimitUnit = "DAY"
+	RateLimitUnit_MONTH   RateLimitUnit = "MONTH"
+	RateLimitUnit_YEAR    RateLimitUnit = "YEAR"
+)
+
+var (
+	RateLimitUnit_name = map[int32]string{
+		0: "UNKNOWN",
+		1: "SECOND",
+		2: "MINUTE",
+		3: "HOUR",
+		4: "DAY",
+		5: "MONTH",
+		6: "YEAR",
+	}
+	RateLimitUnit_value = map[string]int32{
+		"UNKNOWN": 0,
+		"SECOND":  1,
+		"MINUTE":  2,
+		"HOUR":    3,
+		"DAY":     4,
+		"MONTH":   5,
+		"YEAR":    6,
+	}
+)
+
+func (x RateLimitUnit) ToInt() int32 {
+	return RateLimitUnit_value[strings.ToUpper(string(x))]
 }
 
 // RateLimit_Action_MetaData_Source is an enum type.
@@ -620,6 +840,194 @@ func (x SocketOption_SocketState) ToInt() int32 {
 	return SocketOption_SocketState_value[strings.ToUpper(string(x))]
 }
 
+// StatusCode is an enum type.
+type StatusCode string
+
+const (
+	StatusCode_Empty                         StatusCode = "Empty"
+	StatusCode_Continue                      StatusCode = "Continue"
+	StatusCode_OK                            StatusCode = "OK"
+	StatusCode_Created                       StatusCode = "Created"
+	StatusCode_Accepted                      StatusCode = "Accepted"
+	StatusCode_NonAuthoritativeInformation   StatusCode = "NonAuthoritativeInformation"
+	StatusCode_NoContent                     StatusCode = "NoContent"
+	StatusCode_ResetContent                  StatusCode = "ResetContent"
+	StatusCode_PartialContent                StatusCode = "PartialContent"
+	StatusCode_MultiStatus                   StatusCode = "MultiStatus"
+	StatusCode_AlreadyReported               StatusCode = "AlreadyReported"
+	StatusCode_IMUsed                        StatusCode = "IMUsed"
+	StatusCode_MultipleChoices               StatusCode = "MultipleChoices"
+	StatusCode_MovedPermanently              StatusCode = "MovedPermanently"
+	StatusCode_Found                         StatusCode = "Found"
+	StatusCode_SeeOther                      StatusCode = "SeeOther"
+	StatusCode_NotModified                   StatusCode = "NotModified"
+	StatusCode_UseProxy                      StatusCode = "UseProxy"
+	StatusCode_TemporaryRedirect             StatusCode = "TemporaryRedirect"
+	StatusCode_PermanentRedirect             StatusCode = "PermanentRedirect"
+	StatusCode_BadRequest                    StatusCode = "BadRequest"
+	StatusCode_Unauthorized                  StatusCode = "Unauthorized"
+	StatusCode_PaymentRequired               StatusCode = "PaymentRequired"
+	StatusCode_Forbidden                     StatusCode = "Forbidden"
+	StatusCode_NotFound                      StatusCode = "NotFound"
+	StatusCode_MethodNotAllowed              StatusCode = "MethodNotAllowed"
+	StatusCode_NotAcceptable                 StatusCode = "NotAcceptable"
+	StatusCode_ProxyAuthenticationRequired   StatusCode = "ProxyAuthenticationRequired"
+	StatusCode_RequestTimeout                StatusCode = "RequestTimeout"
+	StatusCode_Conflict                      StatusCode = "Conflict"
+	StatusCode_Gone                          StatusCode = "Gone"
+	StatusCode_LengthRequired                StatusCode = "LengthRequired"
+	StatusCode_PreconditionFailed            StatusCode = "PreconditionFailed"
+	StatusCode_PayloadTooLarge               StatusCode = "PayloadTooLarge"
+	StatusCode_URITooLong                    StatusCode = "URITooLong"
+	StatusCode_UnsupportedMediaType          StatusCode = "UnsupportedMediaType"
+	StatusCode_RangeNotSatisfiable           StatusCode = "RangeNotSatisfiable"
+	StatusCode_ExpectationFailed             StatusCode = "ExpectationFailed"
+	StatusCode_MisdirectedRequest            StatusCode = "MisdirectedRequest"
+	StatusCode_UnprocessableEntity           StatusCode = "UnprocessableEntity"
+	StatusCode_Locked                        StatusCode = "Locked"
+	StatusCode_FailedDependency              StatusCode = "FailedDependency"
+	StatusCode_UpgradeRequired               StatusCode = "UpgradeRequired"
+	StatusCode_PreconditionRequired          StatusCode = "PreconditionRequired"
+	StatusCode_TooManyRequests               StatusCode = "TooManyRequests"
+	StatusCode_RequestHeaderFieldsTooLarge   StatusCode = "RequestHeaderFieldsTooLarge"
+	StatusCode_InternalServerError           StatusCode = "InternalServerError"
+	StatusCode_NotImplemented                StatusCode = "NotImplemented"
+	StatusCode_BadGateway                    StatusCode = "BadGateway"
+	StatusCode_ServiceUnavailable            StatusCode = "ServiceUnavailable"
+	StatusCode_GatewayTimeout                StatusCode = "GatewayTimeout"
+	StatusCode_HTTPVersionNotSupported       StatusCode = "HTTPVersionNotSupported"
+	StatusCode_VariantAlsoNegotiates         StatusCode = "VariantAlsoNegotiates"
+	StatusCode_InsufficientStorage           StatusCode = "InsufficientStorage"
+	StatusCode_LoopDetected                  StatusCode = "LoopDetected"
+	StatusCode_NotExtended                   StatusCode = "NotExtended"
+	StatusCode_NetworkAuthenticationRequired StatusCode = "NetworkAuthenticationRequired"
+)
+
+var (
+	StatusCode_name = map[int32]string{
+		0:   "Empty",
+		100: "Continue",
+		200: "OK",
+		201: "Created",
+		202: "Accepted",
+		203: "NonAuthoritativeInformation",
+		204: "NoContent",
+		205: "ResetContent",
+		206: "PartialContent",
+		207: "MultiStatus",
+		208: "AlreadyReported",
+		226: "IMUsed",
+		300: "MultipleChoices",
+		301: "MovedPermanently",
+		302: "Found",
+		303: "SeeOther",
+		304: "NotModified",
+		305: "UseProxy",
+		307: "TemporaryRedirect",
+		308: "PermanentRedirect",
+		400: "BadRequest",
+		401: "Unauthorized",
+		402: "PaymentRequired",
+		403: "Forbidden",
+		404: "NotFound",
+		405: "MethodNotAllowed",
+		406: "NotAcceptable",
+		407: "ProxyAuthenticationRequired",
+		408: "RequestTimeout",
+		409: "Conflict",
+		410: "Gone",
+		411: "LengthRequired",
+		412: "PreconditionFailed",
+		413: "PayloadTooLarge",
+		414: "URITooLong",
+		415: "UnsupportedMediaType",
+		416: "RangeNotSatisfiable",
+		417: "ExpectationFailed",
+		421: "MisdirectedRequest",
+		422: "UnprocessableEntity",
+		423: "Locked",
+		424: "FailedDependency",
+		426: "UpgradeRequired",
+		428: "PreconditionRequired",
+		429: "TooManyRequests",
+		431: "RequestHeaderFieldsTooLarge",
+		500: "InternalServerError",
+		501: "NotImplemented",
+		502: "BadGateway",
+		503: "ServiceUnavailable",
+		504: "GatewayTimeout",
+		505: "HTTPVersionNotSupported",
+		506: "VariantAlsoNegotiates",
+		507: "InsufficientStorage",
+		508: "LoopDetected",
+		510: "NotExtended",
+		511: "NetworkAuthenticationRequired",
+	}
+	StatusCode_value = map[string]int32{
+		"Empty":                         0,
+		"Continue":                      100,
+		"OK":                            200,
+		"Created":                       201,
+		"Accepted":                      202,
+		"NonAuthoritativeInformation":   203,
+		"NoContent":                     204,
+		"ResetContent":                  205,
+		"PartialContent":                206,
+		"MultiStatus":                   207,
+		"AlreadyReported":               208,
+		"IMUsed":                        226,
+		"MultipleChoices":               300,
+		"MovedPermanently":              301,
+		"Found":                         302,
+		"SeeOther":                      303,
+		"NotModified":                   304,
+		"UseProxy":                      305,
+		"TemporaryRedirect":             307,
+		"PermanentRedirect":             308,
+		"BadRequest":                    400,
+		"Unauthorized":                  401,
+		"PaymentRequired":               402,
+		"Forbidden":                     403,
+		"NotFound":                      404,
+		"MethodNotAllowed":              405,
+		"NotAcceptable":                 406,
+		"ProxyAuthenticationRequired":   407,
+		"RequestTimeout":                408,
+		"Conflict":                      409,
+		"Gone":                          410,
+		"LengthRequired":                411,
+		"PreconditionFailed":            412,
+		"PayloadTooLarge":               413,
+		"URITooLong":                    414,
+		"UnsupportedMediaType":          415,
+		"RangeNotSatisfiable":           416,
+		"ExpectationFailed":             417,
+		"MisdirectedRequest":            421,
+		"UnprocessableEntity":           422,
+		"Locked":                        423,
+		"FailedDependency":              424,
+		"UpgradeRequired":               426,
+		"PreconditionRequired":          428,
+		"TooManyRequests":               429,
+		"RequestHeaderFieldsTooLarge":   431,
+		"InternalServerError":           500,
+		"NotImplemented":                501,
+		"BadGateway":                    502,
+		"ServiceUnavailable":            503,
+		"GatewayTimeout":                504,
+		"HTTPVersionNotSupported":       505,
+		"VariantAlsoNegotiates":         506,
+		"InsufficientStorage":           507,
+		"LoopDetected":                  508,
+		"NotExtended":                   510,
+		"NetworkAuthenticationRequired": 511,
+	}
+)
+
+func (x StatusCode) ToInt() int32 {
+	return StatusCode_value[strings.ToUpper(string(x))]
+}
+
 // TrafficDirection is an enum type.
 type TrafficDirection string
 
@@ -674,12 +1082,11 @@ func (x VirtualHost_TlsRequirementType) ToInt() int32 {
 
 // LDS represents the Envoy LDS configuration.
 type LDS struct {
-	Name                string               `json:"name,omitempty"`
-	Address             *Address             `json:"address,omitempty"`
-	AdditionalAddresses []*AdditionalAddress `json:"additional_addresses,omitempty"`
-	StatPrefix          string               `json:"stat_prefix,omitempty"`
-	// +kubebuilder:pruning:PreserveUnknownFields
-	StatsMatcher                            *runtime.RawExtension             `json:"stats_matcher,omitempty"`
+	Name                                    string                            `json:"name,omitempty"`
+	Address                                 *Address                          `json:"address,omitempty"`
+	AdditionalAddresses                     []*AdditionalAddress              `json:"additional_addresses,omitempty"`
+	StatPrefix                              string                            `json:"stat_prefix,omitempty"`
+	StatsMatcher                            *StatsMatcher                     `json:"stats_matcher,omitempty"`
 	FilterChains                            []*FilterChain                    `json:"filter_chains,omitempty"`
 	FcdsConfig                              *Listener_FcdsConfig              `json:"fcds_config,omitempty"`
 	UseOriginalDst                          *bool                             `json:"use_original_dst,omitempty"`
@@ -734,8 +1141,8 @@ func (in *LDS) DeepCopyInto(out *LDS) {
 	}
 	if in.StatsMatcher != nil {
 		in, out := &in.StatsMatcher, &out.StatsMatcher
-		*out = new(runtime.RawExtension)
-		**out = **in
+		*out = new(StatsMatcher)
+		(*in).DeepCopyInto(*out)
 	}
 	if in.FilterChains != nil {
 		in, out := &in.FilterChains, &out.FilterChains
@@ -1338,6 +1745,33 @@ func (in *DataSource) DeepCopyInto(out *DataSource) {
 	}
 }
 
+// DoubleMatcher represents the Envoy DoubleMatcher configuration.
+type DoubleMatcher struct {
+	Range *DoubleRange `json:"range,omitempty"`
+	Exact float64      `json:"exact,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *DoubleMatcher) DeepCopyInto(out *DoubleMatcher) {
+	*out = *in
+	if in.Range != nil {
+		in, out := &in.Range, &out.Range
+		*out = new(DoubleRange)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+// DoubleRange represents the Envoy DoubleRange configuration.
+type DoubleRange struct {
+	Start float64 `json:"start,omitempty"`
+	End   float64 `json:"end,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *DoubleRange) DeepCopyInto(out *DoubleRange) {
+	*out = *in
+}
+
 // DurationFilter represents the Envoy DurationFilter configuration.
 type DurationFilter struct {
 	Comparison *ComparisonFilter `json:"comparison,omitempty"`
@@ -1572,14 +2006,28 @@ func (in *FractionalPercent) DeepCopyInto(out *FractionalPercent) {
 
 // GrpcService represents the Envoy GrpcService configuration.
 type GrpcService struct {
-	Timeout         *string        `json:"timeout,omitempty"`
-	InitialMetadata []*HeaderValue `json:"initial_metadata,omitempty"`
-	RetryPolicy     *RetryPolicy   `json:"retry_policy,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	EnvoyGrpc *runtime.RawExtension `json:"envoy_grpc,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	GoogleGrpc      *runtime.RawExtension `json:"google_grpc,omitempty"`
+	Timeout         *string               `json:"timeout,omitempty"`
+	InitialMetadata []*HeaderValue        `json:"initial_metadata,omitempty"`
+	RetryPolicy     *RetryPolicy          `json:"retry_policy,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
 func (in *GrpcService) DeepCopyInto(out *GrpcService) {
 	*out = *in
+	if in.EnvoyGrpc != nil {
+		in, out := &in.EnvoyGrpc, &out.EnvoyGrpc
+		*out = new(runtime.RawExtension)
+		**out = **in
+	}
+	if in.GoogleGrpc != nil {
+		in, out := &in.GoogleGrpc, &out.GoogleGrpc
+		*out = new(runtime.RawExtension)
+		**out = **in
+	}
 	if in.Timeout != nil {
 		in, out := &in.Timeout, &out.Timeout
 		*out = new(string)
@@ -1705,6 +2153,42 @@ type Int64Range struct {
 // DeepCopyInto copies the receiver into out.
 func (in *Int64Range) DeepCopyInto(out *Int64Range) {
 	*out = *in
+}
+
+// ListMatcher represents the Envoy ListMatcher configuration.
+type ListMatcher struct {
+	// +kubebuilder:pruning:PreserveUnknownFields
+	OneOf *runtime.RawExtension `json:"one_of,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *ListMatcher) DeepCopyInto(out *ListMatcher) {
+	*out = *in
+	if in.OneOf != nil {
+		in, out := &in.OneOf, &out.OneOf
+		*out = new(runtime.RawExtension)
+		**out = **in
+	}
+}
+
+// ListStringMatcher represents the Envoy ListStringMatcher configuration.
+type ListStringMatcher struct {
+	Patterns []*StringMatcher `json:"patterns,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *ListStringMatcher) DeepCopyInto(out *ListStringMatcher) {
+	*out = *in
+	if in.Patterns != nil {
+		in, out := &in.Patterns, &out.Patterns
+		*out = make([]*StringMatcher, len(*in))
+		for i := range *in {
+			if (*in)[i] != nil {
+				(*out)[i] = new(StringMatcher)
+				(*in)[i].DeepCopyInto((*out)[i])
+			}
+		}
+	}
 }
 
 // ListenerFilter represents the Envoy ListenerFilter configuration.
@@ -1920,12 +2404,10 @@ func (in *MetadataFilter) DeepCopyInto(out *MetadataFilter) {
 
 // MetadataMatcher represents the Envoy MetadataMatcher configuration.
 type MetadataMatcher struct {
-	Filter string `json:"filter,omitempty"`
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Path []*runtime.RawExtension `json:"path,omitempty"`
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Value  *runtime.RawExtension `json:"value,omitempty"`
-	Invert bool                  `json:"invert,omitempty"`
+	Filter string                         `json:"filter,omitempty"`
+	Path   []*MetadataMatcher_PathSegment `json:"path,omitempty"`
+	Value  *ValueMatcher                  `json:"value,omitempty"`
+	Invert bool                           `json:"invert,omitempty"`
 }
 
 // DeepCopyInto copies the receiver into out.
@@ -1933,19 +2415,29 @@ func (in *MetadataMatcher) DeepCopyInto(out *MetadataMatcher) {
 	*out = *in
 	if in.Path != nil {
 		in, out := &in.Path, &out.Path
-		*out = make([]*runtime.RawExtension, len(*in))
+		*out = make([]*MetadataMatcher_PathSegment, len(*in))
 		for i := range *in {
 			if (*in)[i] != nil {
-				(*out)[i] = new(runtime.RawExtension)
-				*(*out)[i] = *(*in)[i]
+				(*out)[i] = new(MetadataMatcher_PathSegment)
+				(*in)[i].DeepCopyInto((*out)[i])
 			}
 		}
 	}
 	if in.Value != nil {
 		in, out := &in.Value, &out.Value
-		*out = new(runtime.RawExtension)
-		**out = **in
+		*out = new(ValueMatcher)
+		(*in).DeepCopyInto(*out)
 	}
+}
+
+// MetadataMatcher_PathSegment represents the Envoy MetadataMatcher_PathSegment configuration.
+type MetadataMatcher_PathSegment struct {
+	Key string `json:"key,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *MetadataMatcher_PathSegment) DeepCopyInto(out *MetadataMatcher_PathSegment) {
+	*out = *in
 }
 
 // OrFilter represents the Envoy OrFilter configuration.
@@ -1963,6 +2455,27 @@ func (in *OrFilter) DeepCopyInto(out *OrFilter) {
 			if (*in)[i] != nil {
 				(*out)[i] = new(AccessLogFilter)
 				(*in)[i].DeepCopyInto((*out)[i])
+			}
+		}
+	}
+}
+
+// OrMatcher represents the Envoy OrMatcher configuration.
+type OrMatcher struct {
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ValueMatchers []*runtime.RawExtension `json:"value_matchers,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *OrMatcher) DeepCopyInto(out *OrMatcher) {
+	*out = *in
+	if in.ValueMatchers != nil {
+		in, out := &in.ValueMatchers, &out.ValueMatchers
+		*out = make([]*runtime.RawExtension, len(*in))
+		for i := range *in {
+			if (*in)[i] != nil {
+				(*out)[i] = new(runtime.RawExtension)
+				*(*out)[i] = *(*in)[i]
 			}
 		}
 	}
@@ -2457,6 +2970,28 @@ func (in *SocketOptionsOverride) DeepCopyInto(out *SocketOptionsOverride) {
 	}
 }
 
+// StatsMatcher represents the Envoy StatsMatcher configuration.
+type StatsMatcher struct {
+	RejectAll     bool               `json:"reject_all,omitempty"`
+	ExclusionList *ListStringMatcher `json:"exclusion_list,omitempty"`
+	InclusionList *ListStringMatcher `json:"inclusion_list,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *StatsMatcher) DeepCopyInto(out *StatsMatcher) {
+	*out = *in
+	if in.ExclusionList != nil {
+		in, out := &in.ExclusionList, &out.ExclusionList
+		*out = new(ListStringMatcher)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.InclusionList != nil {
+		in, out := &in.InclusionList, &out.InclusionList
+		*out = new(ListStringMatcher)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
 // StatusCodeFilter represents the Envoy StatusCodeFilter configuration.
 type StatusCodeFilter struct {
 	Comparison *ComparisonFilter `json:"comparison,omitempty"`
@@ -2604,6 +3139,48 @@ func (in *UdpSocketConfig) DeepCopyInto(out *UdpSocketConfig) {
 		in, out := &in.PreferGro, &out.PreferGro
 		*out = new(bool)
 		**out = **in
+	}
+}
+
+// ValueMatcher represents the Envoy ValueMatcher configuration.
+type ValueMatcher struct {
+	// +kubebuilder:pruning:PreserveUnknownFields
+	NullMatch    *runtime.RawExtension `json:"null_match,omitempty"`
+	DoubleMatch  *DoubleMatcher        `json:"double_match,omitempty"`
+	StringMatch  *StringMatcher        `json:"string_match,omitempty"`
+	BoolMatch    bool                  `json:"bool_match,omitempty"`
+	PresentMatch bool                  `json:"present_match,omitempty"`
+	ListMatch    *ListMatcher          `json:"list_match,omitempty"`
+	OrMatch      *OrMatcher            `json:"or_match,omitempty"`
+}
+
+// DeepCopyInto copies the receiver into out.
+func (in *ValueMatcher) DeepCopyInto(out *ValueMatcher) {
+	*out = *in
+	if in.NullMatch != nil {
+		in, out := &in.NullMatch, &out.NullMatch
+		*out = new(runtime.RawExtension)
+		**out = **in
+	}
+	if in.DoubleMatch != nil {
+		in, out := &in.DoubleMatch, &out.DoubleMatch
+		*out = new(DoubleMatcher)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.StringMatch != nil {
+		in, out := &in.StringMatch, &out.StringMatch
+		*out = new(StringMatcher)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.ListMatch != nil {
+		in, out := &in.ListMatch, &out.ListMatch
+		*out = new(ListMatcher)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.OrMatch != nil {
+		in, out := &in.OrMatch, &out.OrMatch
+		*out = new(OrMatcher)
+		(*in).DeepCopyInto(*out)
 	}
 }
 
