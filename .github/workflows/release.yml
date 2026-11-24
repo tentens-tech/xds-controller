@@ -20,7 +20,7 @@ permissions:
   packages: write
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.27'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -33,7 +33,7 @@ jobs:
       should_release: ${{ steps.resolve.outputs.should_release }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -86,12 +86,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.tag }}
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -107,7 +107,7 @@ jobs:
       RELEASE_TAG: ${{ needs.setup.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.tag }}
           fetch-depth: 0
@@ -130,7 +130,7 @@ jobs:
           echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
 
       - name: Build and push amd64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
@@ -152,7 +152,7 @@ jobs:
       RELEASE_TAG: ${{ needs.setup.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.tag }}
           fetch-depth: 0
@@ -175,7 +175,7 @@ jobs:
           echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
 
       - name: Build and push arm64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/arm64
@@ -229,7 +229,7 @@ jobs:
       RELEASE_TAG: ${{ needs.setup.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.tag }}
 
@@ -296,7 +296,7 @@ jobs:
       RELEASE_TAG: ${{ needs.setup.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup.outputs.tag }}
           fetch-depth: 0
@@ -376,7 +376,7 @@ jobs:
           NOTES
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Envoy xDS Controller ${{ env.RELEASE_TAG }}
