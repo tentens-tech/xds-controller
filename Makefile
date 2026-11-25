@@ -2,7 +2,7 @@
 # Image URL to use all building/pushing image targets
 IMG ?= local/xds:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION = 1.25.0
+ENVTEST_K8S_VERSION = 1.37.0
 
 # Version information
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -55,41 +55,38 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
-# Envoy module version for type generation (should match go.mod)
-ENVOY_TAG ?= v1.36.0
-
 .PHONY: generate-types
 generate-types: generate-cds generate-lds generate-rds generate-eds generate-hcm ## Generate all xDS types from go-control-plane
 	@echo "Type generation complete. Run 'make generate' to regenerate DeepCopy methods."
 
 .PHONY: generate-cds
 generate-cds: ## Generate CDS (Cluster) types from go-control-plane
-	@echo "Generating CDS types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/cds -output pkg/xds/types/cds -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating CDS types from go-control-plane in go.mod..."
+	go run ./tools/typegen/cds -output pkg/xds/types/cds -v
 	gofmt -w pkg/xds/types/cds/
 
 .PHONY: generate-lds
 generate-lds: ## Generate LDS (Listener) types from go-control-plane
-	@echo "Generating LDS types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/lds -output pkg/xds/types/lds -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating LDS types from go-control-plane in go.mod..."
+	go run ./tools/typegen/lds -output pkg/xds/types/lds -v
 	gofmt -w pkg/xds/types/lds/
 
 .PHONY: generate-rds
 generate-rds: ## Generate RDS (Route) types from go-control-plane
-	@echo "Generating RDS types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/rds -output pkg/xds/types/rds -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating RDS types from go-control-plane in go.mod..."
+	go run ./tools/typegen/rds -output pkg/xds/types/rds -v
 	gofmt -w pkg/xds/types/rds/
 
 .PHONY: generate-eds
 generate-eds: ## Generate EDS (Endpoint) types from go-control-plane
-	@echo "Generating EDS types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/eds -output pkg/xds/types/eds -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating EDS types from go-control-plane in go.mod..."
+	go run ./tools/typegen/eds -output pkg/xds/types/eds -v
 	gofmt -w pkg/xds/types/eds/
 
 .PHONY: generate-hcm
 generate-hcm: ## Generate HCM (HTTP Connection Manager) types from go-control-plane
-	@echo "Generating HCM types from envoy $(ENVOY_TAG)..."
-	go run ./tools/typegen/hcm -output pkg/xds/types/hcm -envoy-tag $(ENVOY_TAG) -v
+	@echo "Generating HCM types from go-control-plane in go.mod..."
+	go run ./tools/typegen/hcm -output pkg/xds/types/hcm -v
 	gofmt -w pkg/xds/types/hcm/
 
 .PHONY: generateall
@@ -110,8 +107,8 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: lint
-lint: ## Run golangci-lint against code.
-	golangci-lint run --timeout=5m
+lint: golangci-lint ## Run golangci-lint against code.
+	$(GOLANGCI_LINT) run --timeout=5m
 
 .PHONY: pre-commit
 pre-commit: fmt vet lint ## Run pre-commit checks (fmt, vet, lint).
@@ -254,9 +251,9 @@ MOCKGEN ?= $(LOCALBIN)/mockgen
 GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
-KUSTOMIZE_VERSION ?= v4.5.5
-CONTROLLER_TOOLS_VERSION ?= v0.16.4
-GOLANGCI_LINT_VERSION ?= v2.7.1
+KUSTOMIZE_VERSION ?= v5.8.3
+CONTROLLER_TOOLS_VERSION ?= v0.23.0
+GOLANGCI_LINT_VERSION ?= v2.15.0
 
 KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"
 .PHONY: kustomize
@@ -272,7 +269,7 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 .PHONY: mockgen-install
 mockgen-install: $(MOCKGEN)
 $(MOCKGEN): $(LOCALBIN)
-	test -s $(LOCALBIN)/mockgen || GOBIN=$(LOCALBIN) go install github.com/golang/mock/mockgen@v1.6.0
+	test -s $(LOCALBIN)/mockgen || GOBIN=$(LOCALBIN) go install go.uber.org/mock/mockgen@v0.6.0
 
 .PHONY: envtest
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
@@ -282,4 +279,4 @@ $(ENVTEST): $(LOCALBIN)
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
-	test -s $(LOCALBIN)/golangci-lint || curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(LOCALBIN) $(GOLANGCI_LINT_VERSION)
+	test -s $(LOCALBIN)/golangci-lint || GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)

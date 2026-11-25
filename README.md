@@ -152,7 +152,7 @@ You should see the nginx welcome page served through Envoy! 🎉
 
 #### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Kubernetes cluster (local: [KIND](https://sigs.k8s.io/kind), [minikube](https://minikube.sigs.k8s.io/))
 - kubectl configured with your cluster
 
@@ -525,7 +525,7 @@ make test
 The filter chain rules are also checked against a real Envoy (`envoy --mode validate`) when `ENVOY_PARITY_IMAGE` is set. This needs Docker:
 
 ```sh
-ENVOY_PARITY_IMAGE=envoyproxy/envoy:v1.31-latest,envoyproxy/envoy:v1.36-latest go test ./pkg/xds/fcm/
+ENVOY_PARITY_IMAGE=envoyproxy/envoy:v1.31-latest,envoyproxy/envoy:v1.40-latest go test ./pkg/xds/fcm/
 ```
 
 ### Audit Routes

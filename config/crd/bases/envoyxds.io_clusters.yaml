@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.4
+    controller-gen.kubebuilder.io/version: v0.23.0
   name: clusters.envoyxds.io
 spec:
   group: envoyxds.io
@@ -101,6 +101,12 @@ spec:
                     type: string
                   max_connection_duration:
                     type: string
+                  max_connection_duration_jitter:
+                    description: Percent represents the Envoy Percent configuration.
+                    properties:
+                      value:
+                        type: number
+                    type: object
                   max_headers_count:
                     format: int32
                     type: integer
@@ -138,6 +144,9 @@ spec:
                     type: object
                   ignore_new_hosts_until_first_hc:
                     type: boolean
+                  locality_weighted_lb_config:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                   override_host_status:
                     description: HealthStatusSet represents the Envoy HealthStatusSet
                       configuration.
@@ -319,17 +328,7 @@ spec:
                                 envoy_grpc:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
-                                from_plugin:
-                                  type: object
-                                  x-kubernetes-preserve-unknown-fields: true
-                                google_compute_engine:
-                                  type: boolean
-                                google_default:
-                                  type: boolean
                                 google_grpc:
-                                  type: object
-                                  x-kubernetes-preserve-unknown-fields: true
-                                google_iam:
                                   type: object
                                   x-kubernetes-preserve-unknown-fields: true
                                 initial_metadata:
@@ -346,9 +345,6 @@ spec:
                                         type: string
                                     type: object
                                   type: array
-                                int_value:
-                                  format: int64
-                                  type: integer
                                 retry_policy:
                                   description: RetryPolicy represents the Envoy RetryPolicy
                                     configuration.
@@ -394,16 +390,8 @@ spec:
                                           x-kubernetes-preserve-unknown-fields: true
                                       type: object
                                   type: object
-                                ssl_credentials:
-                                  type: object
-                                  x-kubernetes-preserve-unknown-fields: true
-                                string_value:
-                                  type: string
                                 timeout:
                                   type: string
-                                typed_config:
-                                  type: object
-                                  x-kubernetes-preserve-unknown-fields: true
                               type: object
                             type: array
                           rate_limit_settings:
@@ -436,12 +424,16 @@ spec:
                         properties:
                           path:
                             type: string
+                          poll_interval:
+                            type: string
                           watched_directory:
                             description: WatchedDirectory represents the Envoy WatchedDirectory
                               configuration.
                             properties:
                               path:
                                 type: string
+                              watch_modify:
+                                type: boolean
                             type: object
                         type: object
                       resource_api_version:
@@ -517,17 +509,7 @@ spec:
                                       envoy_grpc:
                                         type: object
                                         x-kubernetes-preserve-unknown-fields: true
-                                      from_plugin:
-                                        type: object
-                                        x-kubernetes-preserve-unknown-fields: true
-                                      google_compute_engine:
-                                        type: boolean
-                                      google_default:
-                                        type: boolean
                                       google_grpc:
-                                        type: object
-                                        x-kubernetes-preserve-unknown-fields: true
-                                      google_iam:
                                         type: object
                                         x-kubernetes-preserve-unknown-fields: true
                                       initial_metadata:
@@ -544,9 +526,6 @@ spec:
                                               type: string
                                           type: object
                                         type: array
-                                      int_value:
-                                        format: int64
-                                        type: integer
                                       retry_policy:
                                         description: RetryPolicy represents the Envoy
                                           RetryPolicy configuration.
@@ -593,16 +572,8 @@ spec:
                                                 x-kubernetes-preserve-unknown-fields: true
                                             type: object
                                         type: object
-                                      ssl_credentials:
-                                        type: object
-                                        x-kubernetes-preserve-unknown-fields: true
-                                      string_value:
-                                        type: string
                                       timeout:
                                         type: string
-                                      typed_config:
-                                        type: object
-                                        x-kubernetes-preserve-unknown-fields: true
                                     type: object
                                   type: array
                                 rate_limit_settings:
@@ -635,12 +606,16 @@ spec:
                               properties:
                                 path:
                                   type: string
+                                poll_interval:
+                                  type: string
                                 watched_directory:
                                   description: WatchedDirectory represents the Envoy
                                     WatchedDirectory configuration.
                                   properties:
                                     path:
                                       type: string
+                                    watch_modify:
+                                      type: boolean
                                   type: object
                               type: object
                             resource_api_version:
@@ -702,9 +677,77 @@ spec:
                       description: EventServiceConfig represents the Envoy EventServiceConfig
                         configuration.
                       properties:
-                        typed_config:
+                        grpc_service:
+                          description: GrpcService represents the Envoy GrpcService
+                            configuration.
+                          properties:
+                            envoy_grpc:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            google_grpc:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            initial_metadata:
+                              items:
+                                description: HeaderValue represents the Envoy HeaderValue
+                                  configuration.
+                                properties:
+                                  key:
+                                    type: string
+                                  raw_value:
+                                    format: byte
+                                    type: string
+                                  value:
+                                    type: string
+                                type: object
+                              type: array
+                            retry_policy:
+                              description: RetryPolicy represents the Envoy RetryPolicy
+                                configuration.
+                              properties:
+                                host_selection_retry_max_attempts:
+                                  format: int64
+                                  type: integer
+                                num_retries:
+                                  format: int32
+                                  type: integer
+                                retry_back_off:
+                                  description: BackoffStrategy represents the Envoy
+                                    BackoffStrategy configuration.
+                                  properties:
+                                    base_interval:
+                                      type: string
+                                    max_interval:
+                                      type: string
+                                  type: object
+                                retry_host_predicate:
+                                  items:
+                                    description: RetryPolicy_RetryHostPredicate represents
+                                      the Envoy RetryPolicy_RetryHostPredicate configuration.
+                                    properties:
+                                      name:
+                                        type: string
+                                      typed_config:
+                                        type: object
+                                        x-kubernetes-preserve-unknown-fields: true
+                                    type: object
+                                  type: array
+                                retry_on:
+                                  type: string
+                                retry_priority:
+                                  description: RetryPolicy_RetryPriority represents
+                                    the Envoy RetryPolicy_RetryPriority configuration.
+                                  properties:
+                                    name:
+                                      type: string
+                                    typed_config:
+                                      type: object
+                                      x-kubernetes-preserve-unknown-fields: true
+                                  type: object
+                              type: object
+                            timeout:
+                              type: string
                           type: object
-                          x-kubernetes-preserve-unknown-fields: true
                       type: object
                     grpc_health_check:
                       type: object
@@ -726,6 +769,8 @@ spec:
                     interval_jitter_percent:
                       format: int32
                       type: integer
+                    name:
+                      type: string
                     no_traffic_healthy_interval:
                       type: string
                     no_traffic_interval:
@@ -870,6 +915,10 @@ spec:
                           type: integer
                       type: object
                     type: array
+                  disallow_obs_text:
+                    type: boolean
+                  enable_huffman_encoding:
+                    type: boolean
                   hpack_table_size:
                     format: int32
                     type: integer
@@ -883,6 +932,9 @@ spec:
                     format: int32
                     type: integer
                   max_consecutive_inbound_frames_with_empty_payload:
+                    format: int32
+                    type: integer
+                  max_header_field_size_kb:
                     format: int32
                     type: integer
                   max_inbound_priority_frames_per_stream:
@@ -904,6 +956,12 @@ spec:
                     type: boolean
                   stream_error_on_invalid_http_messaging:
                     type: boolean
+                  stream_reset_burst:
+                    format: int64
+                    type: integer
+                  stream_reset_rate:
+                    format: int64
+                    type: integer
                   use_oghttp2_codec:
                     type: boolean
                 type: object
@@ -1139,6 +1197,8 @@ spec:
                                     type: object
                                   hostname:
                                     type: string
+                                  observability_name:
+                                    type: string
                                 type: object
                               endpoint_name:
                                 type: string
@@ -1212,17 +1272,7 @@ spec:
                                           envoy_grpc:
                                             type: object
                                             x-kubernetes-preserve-unknown-fields: true
-                                          from_plugin:
-                                            type: object
-                                            x-kubernetes-preserve-unknown-fields: true
-                                          google_compute_engine:
-                                            type: boolean
-                                          google_default:
-                                            type: boolean
                                           google_grpc:
-                                            type: object
-                                            x-kubernetes-preserve-unknown-fields: true
-                                          google_iam:
                                             type: object
                                             x-kubernetes-preserve-unknown-fields: true
                                           initial_metadata:
@@ -1239,9 +1289,6 @@ spec:
                                                   type: string
                                               type: object
                                             type: array
-                                          int_value:
-                                            format: int64
-                                            type: integer
                                           retry_policy:
                                             description: RetryPolicy represents the
                                               Envoy RetryPolicy configuration.
@@ -1288,16 +1335,8 @@ spec:
                                                     x-kubernetes-preserve-unknown-fields: true
                                                 type: object
                                             type: object
-                                          ssl_credentials:
-                                            type: object
-                                            x-kubernetes-preserve-unknown-fields: true
-                                          string_value:
-                                            type: string
                                           timeout:
                                             type: string
-                                          typed_config:
-                                            type: object
-                                            x-kubernetes-preserve-unknown-fields: true
                                         type: object
                                       type: array
                                     rate_limit_settings:
@@ -1330,12 +1369,16 @@ spec:
                                   properties:
                                     path:
                                       type: string
+                                    poll_interval:
+                                      type: string
                                     watched_directory:
                                       description: WatchedDirectory represents the
                                         Envoy WatchedDirectory configuration.
                                       properties:
                                         path:
                                           type: string
+                                        watch_modify:
+                                          type: boolean
                                       type: object
                                   type: object
                                 resource_api_version:
@@ -1548,6 +1591,8 @@ spec:
                           type: object
                         hostname:
                           type: string
+                        observability_name:
+                          type: string
                       type: object
                     type: object
                   policy:
@@ -1576,9 +1621,6 @@ spec:
                       type: object
                     type: array
                 type: object
-              locality_weighted_lb_config:
-                type: object
-                x-kubernetes-preserve-unknown-fields: true
               lrs_report_endpoint_metrics:
                 items:
                   type: string
@@ -1620,17 +1662,7 @@ spec:
                             envoy_grpc:
                               type: object
                               x-kubernetes-preserve-unknown-fields: true
-                            from_plugin:
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                            google_compute_engine:
-                              type: boolean
-                            google_default:
-                              type: boolean
                             google_grpc:
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                            google_iam:
                               type: object
                               x-kubernetes-preserve-unknown-fields: true
                             initial_metadata:
@@ -1647,9 +1679,6 @@ spec:
                                     type: string
                                 type: object
                               type: array
-                            int_value:
-                              format: int64
-                              type: integer
                             retry_policy:
                               description: RetryPolicy represents the Envoy RetryPolicy
                                 configuration.
@@ -1694,16 +1723,8 @@ spec:
                                       x-kubernetes-preserve-unknown-fields: true
                                   type: object
                               type: object
-                            ssl_credentials:
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                            string_value:
-                              type: string
                             timeout:
                               type: string
-                            typed_config:
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
                           type: object
                         type: array
                       rate_limit_settings:
@@ -1736,12 +1757,16 @@ spec:
                     properties:
                       path:
                         type: string
+                      poll_interval:
+                        type: string
                       watched_directory:
                         description: WatchedDirectory represents the Envoy WatchedDirectory
                           configuration.
                         properties:
                           path:
                             type: string
+                          watch_modify:
+                            type: boolean
                         type: object
                     type: object
                   resource_api_version:
@@ -1800,6 +1825,8 @@ spec:
                   consecutive_local_origin_failure:
                     format: int32
                     type: integer
+                  detect_degraded_hosts:
+                    type: boolean
                   enforcing_consecutive_5xx:
                     format: int32
                     type: integer
@@ -1865,6 +1892,8 @@ spec:
                   successful_active_health_check_uneject_host:
                     type: boolean
                 type: object
+              per_connection_buffer_high_watermark_timeout:
+                type: string
               per_connection_buffer_limit_bytes:
                 format: int32
                 type: integer
@@ -1874,12 +1903,94 @@ spec:
                 properties:
                   per_upstream_preconnect_ratio:
                     type: number
+                  preconnect_enabled_metadata:
+                    description: MetadataMatcher represents the Envoy MetadataMatcher
+                      configuration.
+                    properties:
+                      filter:
+                        type: string
+                      invert:
+                        type: boolean
+                      path:
+                        items:
+                          description: MetadataMatcher_PathSegment represents the
+                            Envoy MetadataMatcher_PathSegment configuration.
+                          properties:
+                            key:
+                              type: string
+                          type: object
+                        type: array
+                      value:
+                        description: ValueMatcher represents the Envoy ValueMatcher
+                          configuration.
+                        properties:
+                          bool_match:
+                            type: boolean
+                          double_match:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                          list_match:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                          null_match:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                          or_match:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                          present_match:
+                            type: boolean
+                          string_match:
+                            description: StringMatcher represents the Envoy StringMatcher
+                              configuration.
+                            properties:
+                              contains:
+                                type: string
+                              custom:
+                                description: TypedExtensionConfig represents the Envoy
+                                  TypedExtensionConfig configuration.
+                                properties:
+                                  name:
+                                    type: string
+                                  typed_config:
+                                    type: object
+                                    x-kubernetes-preserve-unknown-fields: true
+                                type: object
+                              exact:
+                                type: string
+                              ignore_case:
+                                type: boolean
+                              prefix:
+                                type: string
+                              safe_regex:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              suffix:
+                                type: string
+                            type: object
+                        type: object
+                    type: object
                   predictive_preconnect_ratio:
                     type: number
                 type: object
               protocol_selection:
                 description: Cluster_ClusterProtocolSelection is an enum type.
                 type: string
+              queuing_policies:
+                description: Cluster_QueuingPolicies represents the Envoy Cluster_QueuingPolicies
+                  configuration.
+                properties:
+                  pending_rq_policy:
+                    description: TypedExtensionConfig represents the Envoy TypedExtensionConfig
+                      configuration.
+                    properties:
+                      name:
+                        type: string
+                      typed_config:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                type: object
               respect_dns_ttl:
                 type: boolean
               ring_hash_lb_config:
@@ -1888,6 +1999,18 @@ spec:
               round_robin_lb_config:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              stats_matcher:
+                description: StatsMatcher represents the Envoy StatsMatcher configuration.
+                properties:
+                  exclusion_list:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  inclusion_list:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  reject_all:
+                    type: boolean
+                type: object
               track_cluster_stats:
                 description: TrackClusterStats represents the Envoy TrackClusterStats
                   configuration.
@@ -2021,6 +2144,10 @@ spec:
                                   int_value:
                                     format: int64
                                     type: integer
+                                  ip_version:
+                                    description: SocketOption_SocketIpVersion is an
+                                      enum type.
+                                    type: string
                                   level:
                                     format: int64
                                     type: integer
@@ -2072,6 +2199,9 @@ spec:
                         int_value:
                           format: int64
                           type: integer
+                        ip_version:
+                          description: SocketOption_SocketIpVersion is an enum type.
+                          type: string
                         level:
                           format: int64
                           type: integer
@@ -2115,6 +2245,8 @@ spec:
                       resolver_name:
                         type: string
                     type: object
+                  validate_network_namespaces:
+                    type: boolean
                 type: object
               upstream_config:
                 description: TypedExtensionConfig represents the Envoy TypedExtensionConfig

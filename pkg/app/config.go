@@ -322,7 +322,7 @@ func loadEnvString(target *string, envName string) {
 
 // loadEnvFromFile loads environment variables from a file if it exists.
 func loadEnvFromFile(path string) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(path); os.IsNotExist(err) { // #nosec G703 -- path is the operator-set ENV_FILE
 		return
 	}
 

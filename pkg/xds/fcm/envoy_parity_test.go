@@ -32,7 +32,7 @@ import (
 
 // TestEnvoyParity checks every verdict against `envoy --mode validate`.
 // Set ENVOY_PARITY_IMAGE to one or more comma-separated images
-// (e.g. envoyproxy/envoy:v1.36-latest) to run it; needs docker.
+// (e.g. envoyproxy/envoy:v1.40-latest) to run it; needs docker.
 func TestEnvoyParity(t *testing.T) {
 	images := os.Getenv("ENVOY_PARITY_IMAGE")
 	if images == "" {

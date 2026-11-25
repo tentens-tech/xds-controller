@@ -108,7 +108,3 @@ type RouteList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Route `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&Route{}, &RouteList{})
-}

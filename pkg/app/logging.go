@@ -16,6 +16,7 @@ package app
 
 import (
 	"flag"
+	"math"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/zapr"
@@ -31,7 +32,7 @@ func SetupLogger(opts *Options, fs *flag.FlagSet) logr.Logger {
 	zapOpts := crtzap.Options{
 		Development: !opts.Production,
 		TimeEncoder: zapcore.ISO8601TimeEncoder,
-		Level:       zapcore.Level(opts.LogLevel),
+		Level:       zapLevel(opts.LogLevel),
 		EncoderConfigOptions: []crtzap.EncoderConfigOption{
 			func(config *zapcore.EncoderConfig) {
 				config.LevelKey = "level"
@@ -52,6 +53,16 @@ func SetupLogger(opts *Options, fs *flag.FlagSet) logr.Logger {
 	zapLogger := zap.New(filteredCore)
 
 	return zapr.NewLogger(zapLogger)
+}
+
+// zapLevel clamps level to int8, the range of zapcore.Level, so out-of-range values do not wrap.
+func zapLevel(level int) zapcore.Level {
+	if level < math.MinInt8 {
+		level = math.MinInt8
+	} else if level > math.MaxInt8 {
+		level = math.MaxInt8
+	}
+	return zapcore.Level(level)
 }
 
 // customLevelEncoder returns a custom zapcore level encoder that maps

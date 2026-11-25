@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.4
+    controller-gen.kubebuilder.io/version: v0.23.0
   name: listeners.envoyxds.io
 spec:
   group: envoyxds.io
@@ -68,173 +68,8 @@ spec:
                   description: AccessLog represents the Envoy AccessLog configuration.
                   properties:
                     filter:
-                      description: AccessLogFilter represents the Envoy AccessLogFilter
-                        configuration.
-                      properties:
-                        and_filter:
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        duration_filter:
-                          description: DurationFilter represents the Envoy DurationFilter
-                            configuration.
-                          properties:
-                            comparison:
-                              description: ComparisonFilter represents the Envoy ComparisonFilter
-                                configuration.
-                              properties:
-                                op:
-                                  description: ComparisonFilter_Op is an enum type.
-                                  type: string
-                                value:
-                                  description: RuntimeUInt32 represents the Envoy
-                                    RuntimeUInt32 configuration.
-                                  properties:
-                                    default_value:
-                                      format: int32
-                                      type: integer
-                                    runtime_key:
-                                      type: string
-                                  type: object
-                              type: object
-                          type: object
-                        extension_filter:
-                          description: ExtensionFilter represents the Envoy ExtensionFilter
-                            configuration.
-                          properties:
-                            name:
-                              type: string
-                            typed_config:
-                              type: object
-                              x-kubernetes-preserve-unknown-fields: true
-                          type: object
-                        grpc_status_filter:
-                          description: GrpcStatusFilter represents the Envoy GrpcStatusFilter
-                            configuration.
-                          properties:
-                            exclude:
-                              type: boolean
-                            statuses:
-                              items:
-                                description: GrpcStatusFilter_Status is an enum type.
-                                type: string
-                              type: array
-                          type: object
-                        header_filter:
-                          description: HeaderFilter represents the Envoy HeaderFilter
-                            configuration.
-                          properties:
-                            header:
-                              description: HeaderMatcher represents the Envoy HeaderMatcher
-                                configuration.
-                              properties:
-                                invert_match:
-                                  type: boolean
-                                name:
-                                  type: string
-                                treat_missing_header_as_empty:
-                                  type: boolean
-                              type: object
-                          type: object
-                        log_type_filter:
-                          description: LogTypeFilter represents the Envoy LogTypeFilter
-                            configuration.
-                          properties:
-                            exclude:
-                              type: boolean
-                            types:
-                              items:
-                                description: AccessLogType is an enum type.
-                                type: string
-                              type: array
-                          type: object
-                        metadata_filter:
-                          description: MetadataFilter represents the Envoy MetadataFilter
-                            configuration.
-                          properties:
-                            match_if_key_not_found:
-                              type: boolean
-                            matcher:
-                              description: MetadataMatcher represents the Envoy MetadataMatcher
-                                configuration.
-                              properties:
-                                filter:
-                                  type: string
-                                invert:
-                                  type: boolean
-                                path:
-                                  items:
-                                    type: object
-                                    x-kubernetes-preserve-unknown-fields: true
-                                  type: array
-                                  x-kubernetes-preserve-unknown-fields: true
-                                value:
-                                  type: object
-                                  x-kubernetes-preserve-unknown-fields: true
-                              type: object
-                          type: object
-                        not_health_check_filter:
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        or_filter:
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        response_flag_filter:
-                          description: ResponseFlagFilter represents the Envoy ResponseFlagFilter
-                            configuration.
-                          properties:
-                            flags:
-                              items:
-                                type: string
-                              type: array
-                          type: object
-                        runtime_filter:
-                          description: RuntimeFilter represents the Envoy RuntimeFilter
-                            configuration.
-                          properties:
-                            percent_sampled:
-                              description: FractionalPercent represents the Envoy
-                                FractionalPercent configuration.
-                              properties:
-                                denominator:
-                                  description: FractionalPercent_DenominatorType is
-                                    an enum type.
-                                  type: string
-                                numerator:
-                                  format: int32
-                                  type: integer
-                              type: object
-                            runtime_key:
-                              type: string
-                            use_independent_randomness:
-                              type: boolean
-                          type: object
-                        status_code_filter:
-                          description: StatusCodeFilter represents the Envoy StatusCodeFilter
-                            configuration.
-                          properties:
-                            comparison:
-                              description: ComparisonFilter represents the Envoy ComparisonFilter
-                                configuration.
-                              properties:
-                                op:
-                                  description: ComparisonFilter_Op is an enum type.
-                                  type: string
-                                value:
-                                  description: RuntimeUInt32 represents the Envoy
-                                    RuntimeUInt32 configuration.
-                                  properties:
-                                    default_value:
-                                      format: int32
-                                      type: integer
-                                    runtime_key:
-                                      type: string
-                                  type: object
-                              type: object
-                          type: object
-                        traceable_filter:
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     name:
                       type: string
                     typed_config:
@@ -307,6 +142,10 @@ spec:
                               int_value:
                                 format: int64
                                 type: integer
+                              ip_version:
+                                description: SocketOption_SocketIpVersion is an enum
+                                  type.
+                                type: string
                               level:
                                 format: int64
                                 type: integer
@@ -329,6 +168,20 @@ spec:
                                 type: object
                             type: object
                           type: array
+                      type: object
+                    tcp_keepalive:
+                      description: TcpKeepalive represents the Envoy TcpKeepalive
+                        configuration.
+                      properties:
+                        keepalive_interval:
+                          format: int32
+                          type: integer
+                        keepalive_probes:
+                          format: int32
+                          type: integer
+                        keepalive_time:
+                          format: int32
+                          type: integer
                       type: object
                   type: object
                 type: array
@@ -387,8 +240,26 @@ spec:
               bypass_overload_manager:
                 type: boolean
               connection_balance_config:
+                description: Listener_ConnectionBalanceConfig represents the Envoy
+                  Listener_ConnectionBalanceConfig configuration.
+                properties:
+                  cpu_locality_balance:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  exact_balance:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  extend_balance:
+                    description: TypedExtensionConfig represents the Envoy TypedExtensionConfig
+                      configuration.
+                    properties:
+                      name:
+                        type: string
+                      typed_config:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
                 type: object
-                x-kubernetes-preserve-unknown-fields: true
               continue_on_listener_filters_timeout:
                 type: boolean
               default_filter_chain:
@@ -505,6 +376,12 @@ spec:
                                         description: GrpcService represents the Envoy
                                           GrpcService configuration.
                                         properties:
+                                          envoy_grpc:
+                                            type: object
+                                            x-kubernetes-preserve-unknown-fields: true
+                                          google_grpc:
+                                            type: object
+                                            x-kubernetes-preserve-unknown-fields: true
                                           initial_metadata:
                                             items:
                                               description: HeaderValue represents
@@ -599,12 +476,16 @@ spec:
                                   properties:
                                     path:
                                       type: string
+                                    poll_interval:
+                                      type: string
                                     watched_directory:
                                       description: WatchedDirectory represents the
                                         Envoy WatchedDirectory configuration.
                                       properties:
                                         path:
                                           type: string
+                                        watch_modify:
+                                          type: boolean
                                       type: object
                                   type: object
                                 resource_api_version:
@@ -681,19 +562,6 @@ spec:
                 type: boolean
               enable_reuse_port:
                 type: boolean
-              exact_balance:
-                type: object
-                x-kubernetes-preserve-unknown-fields: true
-              extend_balance:
-                description: TypedExtensionConfig represents the Envoy TypedExtensionConfig
-                  configuration.
-                properties:
-                  name:
-                    type: string
-                  typed_config:
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                type: object
               fcds_config:
                 description: Listener_FcdsConfig represents the Envoy Listener_FcdsConfig
                   configuration.
@@ -732,6 +600,12 @@ spec:
                               description: GrpcService represents the Envoy GrpcService
                                 configuration.
                               properties:
+                                envoy_grpc:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                google_grpc:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
                                 initial_metadata:
                                   items:
                                     description: HeaderValue represents the Envoy
@@ -825,12 +699,16 @@ spec:
                         properties:
                           path:
                             type: string
+                          poll_interval:
+                            type: string
                           watched_directory:
                             description: WatchedDirectory represents the Envoy WatchedDirectory
                               configuration.
                             properties:
                               path:
                                 type: string
+                              watch_modify:
+                                type: boolean
                             type: object
                         type: object
                       resource_api_version:
@@ -966,6 +844,12 @@ spec:
                                           description: GrpcService represents the
                                             Envoy GrpcService configuration.
                                           properties:
+                                            envoy_grpc:
+                                              type: object
+                                              x-kubernetes-preserve-unknown-fields: true
+                                            google_grpc:
+                                              type: object
+                                              x-kubernetes-preserve-unknown-fields: true
                                             initial_metadata:
                                               items:
                                                 description: HeaderValue represents
@@ -1060,12 +944,16 @@ spec:
                                     properties:
                                       path:
                                         type: string
+                                      poll_interval:
+                                        type: string
                                       watched_directory:
                                         description: WatchedDirectory represents the
                                           Envoy WatchedDirectory configuration.
                                         properties:
                                           path:
                                             type: string
+                                          watch_modify:
+                                            type: boolean
                                         type: object
                                     type: object
                                   resource_api_version:
@@ -1183,6 +1071,12 @@ spec:
                                     description: GrpcService represents the Envoy
                                       GrpcService configuration.
                                     properties:
+                                      envoy_grpc:
+                                        type: object
+                                        x-kubernetes-preserve-unknown-fields: true
+                                      google_grpc:
+                                        type: object
+                                        x-kubernetes-preserve-unknown-fields: true
                                       initial_metadata:
                                         items:
                                           description: HeaderValue represents the
@@ -1277,12 +1171,16 @@ spec:
                               properties:
                                 path:
                                   type: string
+                                poll_interval:
+                                  type: string
                                 watched_directory:
                                   description: WatchedDirectory represents the Envoy
                                     WatchedDirectory configuration.
                                   properties:
                                     path:
                                       type: string
+                                    watch_modify:
+                                      type: boolean
                                   type: object
                               type: object
                             resource_api_version:
@@ -1306,32 +1204,8 @@ spec:
                           type: array
                       type: object
                     filter_disabled:
-                      description: ListenerFilterChainMatchPredicate represents the
-                        Envoy ListenerFilterChainMatchPredicate configuration.
-                      properties:
-                        and_match:
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        any_match:
-                          type: boolean
-                        destination_port_range:
-                          description: Int32Range represents the Envoy Int32Range
-                            configuration.
-                          properties:
-                            end:
-                              format: int32
-                              type: integer
-                            start:
-                              format: int32
-                              type: integer
-                          type: object
-                        not_match:
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        or_match:
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
                       type: object
+                      x-kubernetes-preserve-unknown-fields: true
                     name:
                       type: string
                     typed_config:
@@ -1362,6 +1236,8 @@ spec:
                 type: object
               name:
                 type: string
+              per_connection_buffer_high_watermark_timeout:
+                type: string
               per_connection_buffer_limit_bytes:
                 format: int32
                 type: integer
@@ -1379,6 +1255,9 @@ spec:
                     int_value:
                       format: int64
                       type: integer
+                    ip_version:
+                      description: SocketOption_SocketIpVersion is an enum type.
+                      type: string
                     level:
                       format: int64
                       type: integer
@@ -1403,12 +1282,115 @@ spec:
                 type: array
               stat_prefix:
                 type: string
+              stats_matcher:
+                description: StatsMatcher represents the Envoy StatsMatcher configuration.
+                properties:
+                  exclusion_list:
+                    description: ListStringMatcher represents the Envoy ListStringMatcher
+                      configuration.
+                    properties:
+                      patterns:
+                        items:
+                          description: StringMatcher represents the Envoy StringMatcher
+                            configuration.
+                          properties:
+                            contains:
+                              type: string
+                            custom:
+                              description: TypedExtensionConfig represents the Envoy
+                                TypedExtensionConfig configuration.
+                              properties:
+                                name:
+                                  type: string
+                                typed_config:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                              type: object
+                            exact:
+                              type: string
+                            ignore_case:
+                              type: boolean
+                            prefix:
+                              type: string
+                            safe_regex:
+                              description: RegexMatcher represents the Envoy RegexMatcher
+                                configuration.
+                              properties:
+                                google_re2:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                regex:
+                                  type: string
+                              type: object
+                            suffix:
+                              type: string
+                          type: object
+                        type: array
+                    type: object
+                  inclusion_list:
+                    description: ListStringMatcher represents the Envoy ListStringMatcher
+                      configuration.
+                    properties:
+                      patterns:
+                        items:
+                          description: StringMatcher represents the Envoy StringMatcher
+                            configuration.
+                          properties:
+                            contains:
+                              type: string
+                            custom:
+                              description: TypedExtensionConfig represents the Envoy
+                                TypedExtensionConfig configuration.
+                              properties:
+                                name:
+                                  type: string
+                                typed_config:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                              type: object
+                            exact:
+                              type: string
+                            ignore_case:
+                              type: boolean
+                            prefix:
+                              type: string
+                            safe_regex:
+                              description: RegexMatcher represents the Envoy RegexMatcher
+                                configuration.
+                              properties:
+                                google_re2:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                regex:
+                                  type: string
+                              type: object
+                            suffix:
+                              type: string
+                          type: object
+                        type: array
+                    type: object
+                  reject_all:
+                    type: boolean
+                type: object
               tcp_backlog_size:
                 format: int32
                 type: integer
               tcp_fast_open_queue_length:
                 format: int32
                 type: integer
+              tcp_keepalive:
+                description: TcpKeepalive represents the Envoy TcpKeepalive configuration.
+                properties:
+                  keepalive_interval:
+                    format: int32
+                    type: integer
+                  keepalive_probes:
+                    format: int32
+                    type: integer
+                  keepalive_time:
+                    format: int32
+                    type: integer
+                type: object
               traffic_direction:
                 description: TrafficDirection is an enum type.
                 type: string
@@ -1475,6 +1457,9 @@ spec:
                         type: object
                       idle_timeout:
                         type: string
+                      max_sessions_per_event_loop:
+                        format: int32
+                        type: integer
                       packets_to_read_to_connection_count_ratio:
                         format: int32
                         type: integer
@@ -1488,6 +1473,9 @@ spec:
                             type: object
                             x-kubernetes-preserve-unknown-fields: true
                         type: object
+                      quic_protocol_options:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
                       reject_new_connections:
                         type: boolean
                       save_cmsg_config:
